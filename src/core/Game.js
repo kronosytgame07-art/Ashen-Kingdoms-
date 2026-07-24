@@ -1,10 +1,12 @@
 import { BUILDINGS, resourceCaps, upgradeCost, upgradeTime } from '../data/buildings.js';
 import { QUESTS, isBuildingUnlocked, maxLevelFor } from '../data/progression.js';
+import { UNITS } from '../data/units.js';
 import { Grid } from './Grid.js';
 import { SaveManager } from './SaveManager.js';
 import { AssetManager } from './AssetManager.js';
 import { Renderer } from './Renderer.js';
 import { Economy } from './Economy.js';
+import { TrainingManager } from './TrainingManager.js';
 import { GameUI } from '../ui/GameUI.js';
 
 const makeId = () => globalThis.crypto?.randomUUID?.() || `b-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -18,18 +20,22 @@ export class Game {
     this.assets = new AssetManager();
     this.renderer = new Renderer(canvas, this.grid, BUILDINGS, this.assets);
     this.economy = new Economy();
+    this.training = new TrainingManager();
     this.ui = new GameUI(BUILDINGS);
     this.state = this.saveManager.load(() => ({
       version: 2,
       resources: { gold: 650, wood: 520, essence: 80 },
       buildings: [{ id: makeId(), type: 'townHall', col: 7, row: 7, level: 1, readyAt: 0 }],
       buildQueue: [],
+      trainingQueue: [],
+      army: { skeleton: 0, ghoul: 0, necromancer: 0 },
       camera: { x: 0, y: -20, zoom: 1 },
       tutorialStep: 0,
       completedQuests: [],
       claimedQuests: [],
       savedAt: Date.now()
     }));
+    this.training.ensureState(this.state);
     this.interaction = { selectedId: null, placementType: null, movingId: null, preview: null };
     this.pointers = new Map();
     this.drag = null;
@@ -44,18 +50,20 @@ export class Game {
       if (definition.sprite) await this.assets.loadImage(type, definition.sprite);
     }
     const offline = this.economy.applyOfflineProgress(this.state);
+    const trainedOffline = this.training.applyOfflineProgress(this.state);
     this.refreshQuests();
     this.bindEvents();
     this.renderer.resize();
-    this.notifyOfflineProgress(offline);
+    this.notifyOfflineProgress(offline, trainedOffline);
     requestAnimationFrame((time) => this.loop(time));
     setInterval(() => this.save(), 5000);
   }
 
-  notifyOfflineProgress(result) {
+  notifyOfflineProgress(result, trainedOffline = []) {
     const total = Object.values(result.gained).reduce((sum, value) => sum + value, 0);
-    if (result.completed > 0) this.ui.toast(`${result.completed} construction(s) terminée(s) pendant votre absence`, 'success');
-    else if (result.elapsedSeconds > 30 && total >= 1) this.ui.toast(`Production hors ligne récupérée`, 'success');
+    if (trainedOffline.length > 0) this.ui.toast(`${trainedOffline.length} troupe(s) prête(s) pendant votre absence`, 'success');
+    else if (result.completed > 0) this.ui.toast(`${result.completed} construction(s) terminée(s) pendant votre absence`, 'success');
+    else if (result.elapsedSeconds > 30 && total >= 1) this.ui.toast('Production hors ligne récupérée', 'success');
   }
 
   bindEvents() {
@@ -113,11 +121,21 @@ export class Game {
         this.interaction.placementType=type; this.interaction.movingId=null; this.interaction.selectedId=null;
         this.ui.toast(`Placez : ${BUILDINGS[type].name}`);
       },
+      onTrain: (type) => this.trainUnit(type),
       onMove: () => { if(!this.interaction.selectedId)return; this.interaction.movingId=this.interaction.selectedId; this.interaction.selectedId=null; this.ui.toast('Choisissez le nouvel emplacement'); },
       onUpgrade: () => this.upgradeSelected(),
       onRemove: () => this.removeSelected(),
       onCenter: () => { this.state.camera={x:0,y:-20,zoom:1}; this.dirty=true; }
     });
+  }
+
+  trainUnit(type) {
+    const result = this.training.enqueue(this.state, type);
+    if (!result.ok) return this.ui.toast(result.reason, 'error');
+    this.ui.toast(`${UNITS[type].name} ajouté à la file`, 'success');
+    this.refreshQuests();
+    this.save();
+    this.dirty = true;
   }
 
   updatePreview(pos) {
@@ -188,9 +206,10 @@ export class Game {
     this.state.completedQuests ??= [];
     this.state.claimedQuests ??= [];
     for (const quest of QUESTS) {
-      const complete = quest.type === 'build'
-        ? this.state.buildings.some((building) => building.type === quest.target)
-        : this.state.buildings.some((building) => building.type === quest.target && building.level >= quest.value);
+      let complete = false;
+      if (quest.type === 'build') complete = this.state.buildings.some((building) => building.type === quest.target);
+      if (quest.type === 'level') complete = this.state.buildings.some((building) => building.type === quest.target && building.level >= quest.value);
+      if (quest.type === 'train') complete = (this.state.army?.[quest.target] ?? 0) >= quest.value;
       if (complete && !this.state.completedQuests.includes(quest.id)) {
         this.state.completedQuests.push(quest.id);
         for (const [resource, amount] of Object.entries(quest.reward)) this.state.resources[resource] = (this.state.resources[resource] ?? 0) + amount;
@@ -206,6 +225,12 @@ export class Game {
 
   update(dt) {
     this.economy.applyProduction(this.state, dt);
+    const completedUnits = this.training.update(this.state);
+    if (completedUnits.length > 0) {
+      const last = completedUnits.at(-1);
+      this.ui.toast(`${UNITS[last].name} prêt`, 'success');
+      this.dirty = true;
+    }
     const caps = resourceCaps(this.state);
     for (const resource of Object.keys(this.state.resources)) this.state.resources[resource]=Math.min(caps[resource],this.state.resources[resource]);
     this.refreshQuests();
