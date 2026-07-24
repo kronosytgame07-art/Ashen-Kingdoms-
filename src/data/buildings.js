@@ -6,7 +6,10 @@ export const BUILDINGS = {
     description: 'Cœur du royaume. Son niveau limite celui des autres bâtiments et agrandit le domaine constructible.',
     size: { w: 4, h: 4 }, cost: {}, buildTime: 0, maxLevel: 5, production: null,
     storage: { gold: 1200, wood: 1200, essence: 300 },
-    colors: ['#29222f', '#18151d', '#a66cff'], sprite: 'assets/buildings/hdv1.png', category: 'core'
+    colors: ['#29222f', '#18151d', '#a66cff'],
+    sprite: 'IMG_3440.png',
+    spriteSheet: { columns: 5, rows: 2, frames: 10, fps: 2.2, removeBackground: true, backgroundTolerance: 32 },
+    category: 'core'
   },
   goldMine: {
     name: 'Mine d’or corrompu', description: 'Extrait de l’or souillé des profondeurs.',
