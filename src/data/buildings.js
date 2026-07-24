@@ -9,6 +9,7 @@ export const BUILDINGS = {
     colors: ['#29222f', '#18151d', '#a66cff'],
     sprite: 'IMG_3440.png',
     spriteSheet: { columns: 4, rows: 2, frames: 8, fps: 1.6, removeBackground: true, backgroundTolerance: 32 },
+    spriteRender: { maxTilesWide: 5, scale: 0.92, anchorY: 0.91, offsetX: 0, offsetY: 0 },
     category: 'core'
   },
   goldMine: {
@@ -113,7 +114,7 @@ export function resourceCaps(state) {
     if (building.readyAt > Date.now()) continue;
     const storage = BUILDINGS[building.type]?.storage;
     if (!storage) continue;
-    const multiplier = 1 + (building.level - 1) * 0.55;
+    const multiplier = 1 + (building.level - 1) * .55;
     for (const [resource, value] of Object.entries(storage)) caps[resource] += Math.round(value * multiplier);
   }
   return {
