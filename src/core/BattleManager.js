@@ -40,6 +40,7 @@ export class BattleManager {
     battle.deployed.push({
       id: `${type}-${Date.now()}-${Math.random()}`,
       type,
+      movementType: unit.movementType ?? 'ground',
       x: clamp(x, 24, bounds.width - 24),
       y: clamp(y, 24, bounds.height - 24),
       hp: unit.hp,
@@ -50,7 +51,7 @@ export class BattleManager {
     return true;
   }
 
-  update(dt, bounds) {
+  update(dt) {
     const battle = this.state;
     if (!battle?.active) return null;
     battle.elapsed += dt;
@@ -69,41 +70,78 @@ export class BattleManager {
         unit.x += ((target.x - unit.x) / d) * speed * dt;
         unit.y += ((target.y - unit.y) / d) * speed * dt;
       } else if (unit.attackCooldown <= 0) {
-        const damage = stats.damage ?? 10;
-        target.hp -= damage;
+        target.hp -= stats.damage ?? 10;
         unit.attackCooldown = 0.8;
         battle.effects.push({ x: target.x, y: target.y, life: 0.28, kind: 'hit' });
       }
     }
 
     for (const building of battle.buildings) {
+      if (!building.trap || building.triggered) continue;
+      const victims = battle.deployed.filter((unit) => !unit.dead && building.trap.targets.includes(unit.movementType) && distance(unit, building) <= building.trap.triggerRadius);
+      if (!victims.length) continue;
+      building.triggered = true;
+      building.hidden = false;
+      for (const unit of battle.deployed) {
+        if (unit.dead || !building.trap.targets.includes(unit.movementType) || distance(unit, building) > building.trap.splashRadius) continue;
+        unit.hp -= building.trap.damage;
+        if (unit.hp <= 0) unit.dead = true;
+      }
+      battle.effects.push({ x: building.x, y: building.y, life: 0.5, kind: 'trap' });
+    }
+
+    for (const building of battle.buildings) {
       if (building.hp <= 0 || !building.defense) continue;
       building.cooldownLeft = Math.max(0, building.cooldownLeft - dt);
       if (building.cooldownLeft > 0) continue;
-      const target = battle.deployed.filter((unit) => !unit.dead).sort((a, b) => distance(a, building) - distance(b, building))[0];
-      if (!target || distance(target, building) > building.defense.range) continue;
-      target.hp -= building.defense.damage;
-      if (target.hp <= 0) target.dead = true;
+      const candidates = battle.deployed.filter((unit) => !unit.dead && building.defense.targets.includes(unit.movementType) && distance(unit, building) <= building.defense.range);
+      const target = this.pickTarget(building, candidates);
+      if (!target) continue;
+
+      if (building.defense.attackType === 'splash') {
+        for (const unit of candidates) {
+          if (distance(unit, target) > (building.defense.splashRadius ?? 42)) continue;
+          unit.hp -= building.defense.damage;
+          if (unit.hp <= 0) unit.dead = true;
+        }
+      } else {
+        target.hp -= building.defense.damage;
+        if (target.hp <= 0) target.dead = true;
+      }
       building.cooldownLeft = building.defense.cooldown;
-      battle.effects.push({ x: target.x, y: target.y, life: 0.35, kind: 'shot' });
+      battle.effects.push({ x: target.x, y: target.y, life: 0.35, kind: building.defense.attackType === 'splash' ? 'splash' : 'shot' });
     }
 
     battle.effects.forEach((effect) => { effect.life -= dt; });
     battle.effects = battle.effects.filter((effect) => effect.life > 0);
 
-    const remainingBuildings = battle.buildings.filter((building) => building.hp > 0);
+    const remainingBuildings = battle.buildings.filter((building) => building.hp > 0 && !building.trap);
     const hasAvailable = Object.values(battle.available).some((count) => count > 0);
     const hasLivingUnits = battle.deployed.some((unit) => !unit.dead);
     if (remainingBuildings.length === 0 || battle.timeLeft <= 0 || (!hasAvailable && !hasLivingUnits)) return this.finish();
     return null;
   }
 
+  pickTarget(building, candidates) {
+    if (!candidates.length) return null;
+    if (building.defense.targetPriority === 'highestHp') return [...candidates].sort((a, b) => b.hp - a.hp)[0];
+    if (building.defense.targetPriority === 'cluster') {
+      return [...candidates].sort((a, b) => this.clusterScore(b, candidates) - this.clusterScore(a, candidates))[0];
+    }
+    return [...candidates].sort((a, b) => distance(a, building) - distance(b, building))[0];
+  }
+
+  clusterScore(unit, units) {
+    return units.reduce((score, other) => score + (distance(unit, other) <= 58 ? 1 : 0), 0);
+  }
+
   finish() {
     const battle = this.state;
     if (!battle?.active) return battle?.result ?? null;
     battle.active = false;
-    const totalHp = battle.buildings.reduce((sum, building) => sum + building.maxHp, 0);
-    const remainingHp = battle.buildings.reduce((sum, building) => sum + Math.max(0, building.hp), 0);
+    const scoringBuildings = battle.buildings.filter((building) => !building.trap);
+    const totalHp = scoringBuildings.reduce((sum, building) => sum + building.maxHp, 0);
+    const remainingHp = scoringBuildings.reduce((sum, building) => sum + Math.max(0, building.hp), 0);
     const destruction = Math.round((1 - remainingHp / totalHp) * 100);
     const throneDestroyed = battle.buildings.find((building) => building.id === 'enemy-throne')?.hp <= 0;
     const stars = destruction === 100 ? 3 : throneDestroyed ? 2 : destruction >= 50 ? 1 : 0;
@@ -114,6 +152,6 @@ export class BattleManager {
   }
 
   closestBuilding(unit) {
-    return this.state.buildings.filter((building) => building.hp > 0).sort((a, b) => distance(unit, a) - distance(unit, b))[0] ?? null;
+    return this.state.buildings.filter((building) => building.hp > 0 && !building.trap).sort((a, b) => distance(unit, a) - distance(unit, b))[0] ?? null;
   }
 }
