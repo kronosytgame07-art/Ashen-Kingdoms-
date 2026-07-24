@@ -9,7 +9,8 @@ export class AssetManager {
       image.onload = () => resolve(image);
       image.onerror = () => { console.warn(`[AssetManager] Image introuvable: ${url}`); resolve(null); };
     });
-    image.src = url;
+    const resolvedUrl = new URL(`../../${url.replace(/^\.\//, '')}`, import.meta.url).href;
+    image.src = resolvedUrl;
     const loaded = await promise;
     this.images.set(key, loaded);
     return loaded;
