@@ -8,6 +8,7 @@ import { Renderer } from './Renderer.js';
 import { Economy } from './Economy.js';
 import { TrainingManager } from './TrainingManager.js';
 import { BattleManager } from './BattleManager.js';
+import { ClanManager } from './ClanManager.js';
 import { GameUI } from '../ui/GameUI.js';
 
 const makeId = () => globalThis.crypto?.randomUUID?.() || `b-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -16,15 +17,17 @@ const LONG_PRESS_MS = 500;
 const MOVE_TOLERANCE = 10;
 
 export class Game {
-  constructor(canvas) {
+  constructor(canvas, options = {}) {
     this.canvas = canvas;
+    this.options = options;
     this.grid = new Grid();
-    this.saveManager = new SaveManager('ashen-kingdoms-save-v2');
+    this.saveManager = new SaveManager(options.storageKey ?? 'ashen-kingdoms-save-v2');
     this.assets = new AssetManager();
     this.renderer = new Renderer(canvas, this.grid, BUILDINGS, this.assets);
     this.economy = new Economy();
     this.training = new TrainingManager();
     this.battle = new BattleManager();
+    this.clans = new ClanManager();
     this.ui = new GameUI(BUILDINGS);
     this.state = this.saveManager.load(() => ({
       version: 2,
@@ -40,6 +43,7 @@ export class Game {
     }));
     this.training.ensureState(this.state);
     this.economy.ensureExtractorState(this.state);
+    this.clans.ensureState(this.state);
     this.interaction = { selectedId: null, placementType: null, movingId: null, preview: null, liftedId: null, collectionPopups: [], troopTransfers: [] };
     this.pointers = new Map();
     this.drag = null;
@@ -48,6 +52,8 @@ export class Game {
     this.lastFrame = performance.now();
     this.lastUiUpdate = 0;
     this.dirty = true;
+    this.running = true;
+    this.saveInterval = null;
   }
 
   async start() {
@@ -59,7 +65,12 @@ export class Game {
     this.renderer.resize();
     this.notifyOfflineProgress(offline, trainedOffline);
     requestAnimationFrame((time) => this.loop(time));
-    setInterval(() => this.save(), 5000);
+    this.saveInterval = setInterval(() => this.save(), 5000);
+  }
+
+  destroy() {
+    this.running = false;
+    if (this.saveInterval) clearInterval(this.saveInterval);
   }
 
   notifyOfflineProgress(result, trainedOffline = []) {
@@ -152,6 +163,10 @@ export class Game {
         this.ui.closeContext(); this.interaction.placementType=type; this.interaction.movingId=null; this.interaction.selectedId=null; this.ui.toast(`Placez : ${BUILDINGS[type].name}`);
       },
       onTrain: (type, barracksId) => this.trainUnit(type, barracksId),
+      onCreateClan: (name) => this.createClan(name),
+      onLeaveClan: () => this.leaveClan(),
+      onDonateClanTroop: (buildingId, type) => this.donateClanTroop(buildingId, type),
+      onReceiveClanTroop: (buildingId, type) => this.receiveClanTroop(buildingId, type),
       onUpgrade: () => this.upgradeSelected(),
       onRemove: () => this.removeSelected(),
       onCenter: () => { this.ui.closeContext(); this.state.camera={x:0,y:-20,zoom:1}; this.dirty=true; },
@@ -160,6 +175,37 @@ export class Game {
       onEndBattle: () => this.finishBattle(),
       onReturnVillage: () => this.returnToVillage()
     });
+  }
+
+  createClan(name) {
+    const result = this.clans.createClan(this.state, name);
+    if (!result.ok) return this.ui.toast(result.reason, 'error');
+    this.ui.toast(`Clan ${this.state.clan.name} fondé`, 'success');
+    this.save(); this.dirty = true;
+  }
+
+  leaveClan() {
+    this.clans.leaveClan(this.state);
+    this.ui.toast('Vous avez quitté le clan', 'success');
+    this.save(); this.dirty = true;
+  }
+
+  donateClanTroop(buildingId, type) {
+    const building = this.state.buildings.find((item) => item.id === buildingId && item.type === 'clanCastle');
+    if (!building) return;
+    const result = this.clans.donateFromCampfires(this.state, building, type);
+    if (!result.ok) return this.ui.toast(result.reason, 'error');
+    this.ui.toast(`${UNITS[type].name} donné au Château de Clan`, 'success');
+    this.save(); this.dirty = true;
+  }
+
+  receiveClanTroop(buildingId, type) {
+    const building = this.state.buildings.find((item) => item.id === buildingId && item.type === 'clanCastle');
+    if (!building) return;
+    const result = this.clans.receiveLocalReinforcement(this.state, building, type);
+    if (!result.ok) return this.ui.toast(result.reason, 'error');
+    this.ui.toast(`${UNITS[type].name} reçu en renfort`, 'success');
+    this.save(); this.dirty = true;
   }
 
   finishLongPressMove(pos) {
@@ -188,9 +234,7 @@ export class Game {
     for (const [resource, amount] of Object.entries(result.loot)) this.state.resources[resource] = (this.state.resources[resource] ?? 0) + amount;
     const survivors = this.battle.state.available;
     for (const building of this.state.buildings.filter((item) => item.type === 'campfire')) building.garrison = { skeleton: 0, ghoul: 0, necromancer: 0 };
-    for (const [type, amount] of Object.entries(survivors)) {
-      for (let i = 0; i < amount; i += 1) this.training.assignToCampfire(this.state, type);
-    }
+    for (const [type, amount] of Object.entries(survivors)) for (let i = 0; i < amount; i += 1) this.training.assignToCampfire(this.state, type);
     this.ui.updateBattle(this.battle.state); this.ui.showBattleResult(result);
     this.ui.toast(result.stars > 0 ? 'Raid terminé — butin récupéré' : 'Raid échoué', result.stars > 0 ? 'success' : 'error');
     this.save(); this.dirty = true;
@@ -238,10 +282,12 @@ export class Game {
       const building={id:makeId(),type,col:cell.col,row:cell.row,level:1,readyAt:Date.now()+definition.buildTime*1000};
       if (definition.extractor) { building.storedResource = 0; building.lastProductionAt = Date.now(); }
       if (definition.panel === 'campfire') building.garrison = { skeleton: 0, ghoul: 0, necromancer: 0 };
+      if (definition.panel === 'clanCastle') building.reinforcements = { skeleton: 0, ghoul: 0, necromancer: 0 };
       this.state.buildings.push(building); this.interaction.selectedId=building.id;
       if(!(type==='wall'&&keepWallMode)) this.interaction.placementType=null;
       this.ui.toast(`${definition.name} placé`,'success'); this.refreshQuests();
     }
+    this.clans.ensureState(this.state);
     this.interaction.preview=null; this.save(); this.dirty=true;
   }
 
@@ -256,6 +302,7 @@ export class Game {
   removeSelected() {
     const building=this.state.buildings.find((item)=>item.id===this.interaction.selectedId); if(!building||building.type==='townHall')return;
     if (building.type === 'campfire' && Object.values(building.garrison ?? {}).some((amount) => amount > 0)) return this.ui.toast('Videz ce Brasier avant de le retirer', 'error');
+    if (building.type === 'clanCastle' && Object.values(building.reinforcements ?? {}).some((amount) => amount > 0)) return this.ui.toast('Videz les renforts avant de retirer le Château', 'error');
     Object.entries(BUILDINGS[building.type].cost).forEach(([resource,amount])=>this.state.resources[resource]+=Math.floor(amount*.5));
     this.state.buildings=this.state.buildings.filter((item)=>item.id!==building.id); this.interaction.selectedId=null; this.ui.closeContext(); this.ui.toast('Bâtiment retiré'); this.save(); this.dirty=true;
   }
@@ -297,6 +344,7 @@ export class Game {
   save() { this.state.savedAt = Date.now(); this.saveManager.save(this.state); }
 
   loop(time) {
+    if (!this.running) return;
     const dt=Math.min(.1,(time-this.lastFrame)/1000); this.lastFrame=time; this.update(dt);
     if(this.dirty || time-this.lastUiUpdate>250){
       this.renderer.render(this.state,this.interaction,time,this.battle.state);
