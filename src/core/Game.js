@@ -1,8 +1,10 @@
-import { BUILDINGS, upgradeCost, upgradeTime } from '../data/buildings.js';
+import { BUILDINGS, resourceCaps, upgradeCost, upgradeTime } from '../data/buildings.js';
+import { QUESTS, isBuildingUnlocked, maxLevelFor } from '../data/progression.js';
 import { Grid } from './Grid.js';
 import { SaveManager } from './SaveManager.js';
 import { AssetManager } from './AssetManager.js';
 import { Renderer } from './Renderer.js';
+import { Economy } from './Economy.js';
 import { GameUI } from '../ui/GameUI.js';
 
 const makeId = () => globalThis.crypto?.randomUUID?.() || `b-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -15,6 +17,7 @@ export class Game {
     this.saveManager = new SaveManager('ashen-kingdoms-save-v2');
     this.assets = new AssetManager();
     this.renderer = new Renderer(canvas, this.grid, BUILDINGS, this.assets);
+    this.economy = new Economy();
     this.ui = new GameUI(BUILDINGS);
     this.state = this.saveManager.load(() => ({
       version: 2,
@@ -23,6 +26,8 @@ export class Game {
       buildQueue: [],
       camera: { x: 0, y: -20, zoom: 1 },
       tutorialStep: 0,
+      completedQuests: [],
+      claimedQuests: [],
       savedAt: Date.now()
     }));
     this.interaction = { selectedId: null, placementType: null, movingId: null, preview: null };
@@ -35,11 +40,22 @@ export class Game {
   }
 
   async start() {
-    await this.assets.loadImage('townHall', 'assets/buildings/hdv1.png');
+    for (const [type, definition] of Object.entries(BUILDINGS)) {
+      if (definition.sprite) await this.assets.loadImage(type, definition.sprite);
+    }
+    const offline = this.economy.applyOfflineProgress(this.state);
+    this.refreshQuests();
     this.bindEvents();
     this.renderer.resize();
+    this.notifyOfflineProgress(offline);
     requestAnimationFrame((time) => this.loop(time));
     setInterval(() => this.save(), 5000);
+  }
+
+  notifyOfflineProgress(result) {
+    const total = Object.values(result.gained).reduce((sum, value) => sum + value, 0);
+    if (result.completed > 0) this.ui.toast(`${result.completed} construction(s) terminée(s) pendant votre absence`, 'success');
+    else if (result.elapsedSeconds > 30 && total >= 1) this.ui.toast(`Production hors ligne récupérée`, 'success');
   }
 
   bindEvents() {
@@ -92,7 +108,11 @@ export class Game {
     window.addEventListener('beforeunload', () => this.save());
 
     this.ui.bind({
-      onBuild: (type) => { this.interaction.placementType=type; this.interaction.movingId=null; this.interaction.selectedId=null; this.ui.toast(`Placez : ${BUILDINGS[type].name}`); },
+      onBuild: (type) => {
+        if (!isBuildingUnlocked(type, this.state)) return this.ui.toast('Améliorez le Trône corrompu pour débloquer ce bâtiment', 'error');
+        this.interaction.placementType=type; this.interaction.movingId=null; this.interaction.selectedId=null;
+        this.ui.toast(`Placez : ${BUILDINGS[type].name}`);
+      },
       onMove: () => { if(!this.interaction.selectedId)return; this.interaction.movingId=this.interaction.selectedId; this.interaction.selectedId=null; this.ui.toast('Choisissez le nouvel emplacement'); },
       onUpgrade: () => this.upgradeSelected(),
       onRemove: () => this.removeSelected(),
@@ -116,49 +136,90 @@ export class Game {
   }
 
   placeWallPreview() {
-    const p=this.interaction.preview; if(!p?.valid || this.drag.wallCells.has(`${p.col},${p.row}`)) return;
-    this.drag.wallCells.add(`${p.col},${p.row}`); this.place({col:p.col,row:p.row}, true);
+    const preview=this.interaction.preview; if(!preview?.valid || this.drag.wallCells.has(`${preview.col},${preview.row}`)) return;
+    this.drag.wallCells.add(`${preview.col},${preview.row}`); this.place({col:preview.col,row:preview.row}, true);
   }
 
   place(cell, keepWallMode=false) {
-    const type=this.interaction.movingId ? this.state.buildings.find((b)=>b.id===this.interaction.movingId)?.type : this.interaction.placementType;
+    const type=this.interaction.movingId ? this.state.buildings.find((building)=>building.id===this.interaction.movingId)?.type : this.interaction.placementType;
     if(!type || !this.grid.canPlace(type,cell.col,cell.row,BUILDINGS,this.state.buildings,this.interaction.movingId)) return this.ui.toast('Emplacement impossible','error');
-    if(this.interaction.movingId){ const b=this.state.buildings.find((x)=>x.id===this.interaction.movingId); b.col=cell.col;b.row=cell.row;this.interaction.movingId=null;this.interaction.selectedId=b.id; }
-    else {
-      const def=BUILDINGS[type];
-      if(Object.entries(def.cost).some(([k,v])=>this.state.resources[k]<v)) return this.ui.toast('Ressources insuffisantes','error');
-      Object.entries(def.cost).forEach(([k,v])=>this.state.resources[k]-=v);
-      const building={id:makeId(),type,col:cell.col,row:cell.row,level:1,readyAt:Date.now()+def.buildTime*1000};
+    if(this.interaction.movingId){
+      const building=this.state.buildings.find((item)=>item.id===this.interaction.movingId);
+      building.col=cell.col; building.row=cell.row; this.interaction.movingId=null; this.interaction.selectedId=building.id;
+    } else {
+      if (!isBuildingUnlocked(type, this.state)) return this.ui.toast('Bâtiment verrouillé', 'error');
+      const definition=BUILDINGS[type];
+      if(!this.economy.spend(this.state, definition.cost)) return this.ui.toast('Ressources insuffisantes','error');
+      const building={id:makeId(),type,col:cell.col,row:cell.row,level:1,readyAt:Date.now()+definition.buildTime*1000};
       this.state.buildings.push(building); this.interaction.selectedId=building.id;
       if(!(type==='wall'&&keepWallMode)) this.interaction.placementType=null;
-      this.ui.toast(`${def.name} placé`,'success');
+      this.ui.toast(`${definition.name} placé`,'success');
+      this.refreshQuests();
     }
     this.interaction.preview=null; this.save(); this.dirty=true;
   }
 
   upgradeSelected() {
-    const b=this.state.buildings.find((x)=>x.id===this.interaction.selectedId); if(!b||b.readyAt>Date.now())return;
-    const def=BUILDINGS[b.type]; if(b.level>=def.maxLevel)return this.ui.toast('Niveau maximum');
-    const cost=upgradeCost(b); if(Object.entries(cost).some(([k,v])=>this.state.resources[k]<v))return this.ui.toast('Ressources insuffisantes','error');
-    Object.entries(cost).forEach(([k,v])=>this.state.resources[k]-=v); b.level+=1; b.readyAt=Date.now()+upgradeTime(b)*1000; this.ui.toast(`Amélioration niveau ${b.level}`,'success'); this.save(); this.dirty=true;
+    const building=this.state.buildings.find((item)=>item.id===this.interaction.selectedId);
+    if(!building||building.readyAt>Date.now())return;
+    const definition=BUILDINGS[building.type];
+    const allowedMax=maxLevelFor(building.type,this.state,BUILDINGS);
+    if(building.level>=allowedMax){
+      const reason = building.type === 'townHall' ? 'Niveau maximum' : 'Améliorez le Trône corrompu pour continuer';
+      return this.ui.toast(reason, 'error');
+    }
+    const cost=upgradeCost(building);
+    if(!this.economy.spend(this.state,cost)) return this.ui.toast('Ressources insuffisantes','error');
+    building.level+=1;
+    building.readyAt=Date.now()+upgradeTime(building)*1000;
+    this.ui.toast(`Amélioration niveau ${building.level}`,'success');
+    this.refreshQuests();
+    this.save(); this.dirty=true;
   }
 
   removeSelected() {
-    const b=this.state.buildings.find((x)=>x.id===this.interaction.selectedId); if(!b||b.type==='townHall')return;
-    Object.entries(BUILDINGS[b.type].cost).forEach(([k,v])=>this.state.resources[k]+=Math.floor(v*.5));
-    this.state.buildings=this.state.buildings.filter((x)=>x.id!==b.id); this.interaction.selectedId=null; this.ui.toast('Bâtiment retiré'); this.save(); this.dirty=true;
+    const building=this.state.buildings.find((item)=>item.id===this.interaction.selectedId); if(!building||building.type==='townHall')return;
+    Object.entries(BUILDINGS[building.type].cost).forEach(([resource,amount])=>this.state.resources[resource]+=Math.floor(amount*.5));
+    this.state.buildings=this.state.buildings.filter((item)=>item.id!==building.id); this.interaction.selectedId=null;
+    this.ui.toast('Bâtiment retiré'); this.save(); this.dirty=true;
+  }
+
+  refreshQuests() {
+    this.state.completedQuests ??= [];
+    this.state.claimedQuests ??= [];
+    for (const quest of QUESTS) {
+      const complete = quest.type === 'build'
+        ? this.state.buildings.some((building) => building.type === quest.target)
+        : this.state.buildings.some((building) => building.type === quest.target && building.level >= quest.value);
+      if (complete && !this.state.completedQuests.includes(quest.id)) {
+        this.state.completedQuests.push(quest.id);
+        for (const [resource, amount] of Object.entries(quest.reward)) this.state.resources[resource] = (this.state.resources[resource] ?? 0) + amount;
+        this.state.claimedQuests.push(quest.id);
+        this.ui.toast(`Objectif accompli : ${quest.text}`, 'success');
+      }
+    }
+  }
+
+  currentQuest() {
+    return QUESTS.find((quest) => !this.state.completedQuests.includes(quest.id)) ?? null;
   }
 
   update(dt) {
-    for(const b of this.state.buildings){ const p=BUILDINGS[b.type].production; if(!p||b.readyAt>Date.now())continue; this.state.resources[p.resource]+=p.perSecond*(1+(b.level-1)*.35)*dt; }
-    Object.keys(this.state.resources).forEach((k)=>this.state.resources[k]=Math.min(999999,this.state.resources[k]));
+    this.economy.applyProduction(this.state, dt);
+    const caps = resourceCaps(this.state);
+    for (const resource of Object.keys(this.state.resources)) this.state.resources[resource]=Math.min(caps[resource],this.state.resources[resource]);
+    this.refreshQuests();
   }
 
-  save() { this.saveManager.save(this.state); }
+  save() { this.state.savedAt = Date.now(); this.saveManager.save(this.state); }
 
   loop(time) {
     const dt=Math.min(.1,(time-this.lastFrame)/1000); this.lastFrame=time; this.update(dt);
-    if(this.dirty || time-this.lastUiUpdate>250){ this.renderer.render(this.state,this.interaction,time); this.ui.update(this.state,this.interaction.selectedId,this.interaction.placementType); this.lastUiUpdate=time; this.dirty=false; }
+    if(this.dirty || time-this.lastUiUpdate>250){
+      this.renderer.render(this.state,this.interaction,time);
+      this.ui.update(this.state,this.interaction.selectedId,this.interaction.placementType,this.currentQuest());
+      this.lastUiUpdate=time; this.dirty=false;
+    }
     requestAnimationFrame((next)=>this.loop(next));
   }
 }
