@@ -40,11 +40,31 @@ export function isUnitUnlocked(type, state) {
   return Boolean(definition && barracksLevel(state) >= definition.unlockBarracksLevel);
 }
 
+export function campfireCapacity(building) {
+  return 12 + (Math.max(1, building.level) - 1) * 6;
+}
+
 export function armyCapacity(state) {
-  const barracks = state.buildings.filter((building) => building.type === 'barracks' && building.readyAt <= Date.now());
-  return barracks.reduce((total, building) => total + 8 + (building.level - 1) * 4, 0);
+  return state.buildings
+    .filter((building) => building.type === 'campfire' && building.readyAt <= Date.now())
+    .reduce((total, building) => total + campfireCapacity(building), 0);
+}
+
+export function garrisonHousing(garrison = {}) {
+  return Object.entries(garrison).reduce((total, [type, amount]) => total + (UNITS[type]?.housing ?? 0) * amount, 0);
 }
 
 export function armyHousing(state) {
-  return Object.entries(state.army ?? {}).reduce((total, [type, amount]) => total + (UNITS[type]?.housing ?? 0) * amount, 0);
+  return state.buildings
+    .filter((building) => building.type === 'campfire' && building.readyAt <= Date.now())
+    .reduce((total, building) => total + garrisonHousing(building.garrison), 0);
+}
+
+export function armyCounts(state) {
+  const counts = Object.fromEntries(Object.keys(UNITS).map((type) => [type, 0]));
+  for (const building of state.buildings) {
+    if (building.type !== 'campfire' || building.readyAt > Date.now()) continue;
+    for (const type of Object.keys(counts)) counts[type] += building.garrison?.[type] ?? 0;
+  }
+  return counts;
 }
