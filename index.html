@@ -4,7 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#120f18" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ashen Kingdoms" />
+  <meta name="description" content="Construisez et défendez votre royaume maudit dans un univers dark fantasy." />
   <title>Ashen Kingdoms</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Cinzel+Decorative:wght@700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -36,7 +45,10 @@
 
   <div id="app" class="hidden">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark">♜</span><div><strong>Ashen Kingdoms</strong><small>Royaume des cendres</small></div></div>
+      <div class="brand">
+        <span class="brand-mark">♜</span>
+        <div><strong>Ashen Kingdoms</strong><small>Royaume des cendres</small></div>
+      </div>
       <div class="resources" aria-label="Ressources">
         <div class="resource gold" title="Or corrompu"><span>●</span><b id="goldValue">0</b></div>
         <div class="resource wood" title="Bois noir"><span>◆</span><b id="woodValue">0</b></div>
@@ -48,11 +60,22 @@
     <main class="game-shell">
       <canvas id="gameCanvas" aria-label="Village Ashen Kingdoms"></canvas>
       <div class="vignette"></div>
-      <section id="objectiveCard" class="objective-card"><span class="objective-icon">☠</span><div><small>OBJECTIF</small><strong id="objectiveText">Développez votre royaume maudit</strong></div></section>
+      <section id="objectiveCard" class="objective-card">
+        <span class="objective-icon">☠</span>
+        <div><small>OBJECTIF</small><strong id="objectiveText">Développez votre royaume maudit</strong></div>
+      </section>
 
       <section id="selectionPanel" class="selection-panel hidden" aria-live="polite">
-        <div><small id="selectionType">BÂTIMENT</small><h2 id="selectionName">Trône corrompu</h2><p id="selectionDescription" class="selection-description"></p><p id="selectionInfo">Niveau 1</p></div>
-        <div class="selection-actions"><button id="upgradeButton">Améliorer</button><button id="removeButton" class="danger">Retirer</button></div>
+        <div>
+          <small id="selectionType">BÂTIMENT</small>
+          <h2 id="selectionName">Trône corrompu</h2>
+          <p id="selectionDescription" class="selection-description"></p>
+          <p id="selectionInfo">Niveau 1</p>
+        </div>
+        <div class="selection-actions">
+          <button id="upgradeButton">Améliorer</button>
+          <button id="removeButton" class="danger">Retirer</button>
+        </div>
       </section>
 
       <div id="contextBackdrop" class="context-backdrop hidden"></div>
@@ -85,18 +108,32 @@
         <div><small>ÉTOILES</small><strong id="battleStars">☆☆☆</strong></div>
         <button id="endBattleButton">Terminer</button>
       </section>
+
       <section id="deploymentBar" class="deployment-bar hidden">
         <button class="deploy-unit" data-unit="skeleton">☠ <strong id="deploySkeleton">0</strong></button>
         <button class="deploy-unit" data-unit="ghoul">♟ <strong id="deployGhoul">0</strong></button>
         <button class="deploy-unit" data-unit="necromancer">✦ <strong id="deployNecromancer">0</strong></button>
       </section>
+
       <section id="battleResult" class="battle-result hidden">
-        <small>RÉSULTAT DU RAID</small><h2 id="resultStars">☆☆☆</h2><p id="resultDestruction">0 % détruit</p><p id="resultLoot">Aucun butin</p><button id="returnVillageButton">Retour au village</button>
+        <small>RÉSULTAT DU RAID</small>
+        <h2 id="resultStars">☆☆☆</h2>
+        <p id="resultDestruction">0 % détruit</p>
+        <p id="resultLoot">Aucun butin</p>
+        <button id="returnVillageButton">Retour au village</button>
       </section>
     </main>
 
     <div id="toast" class="toast" role="status"></div>
   </div>
+
   <script type="module" src="src/main.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('[SW] Registration failed:', err));
+      });
+    }
+  </script>
 </body>
 </html>
