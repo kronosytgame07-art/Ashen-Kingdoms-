@@ -14,7 +14,27 @@
     <p>Ashen Kingdoms se joue uniquement en mode paysage.</p>
   </div>
 
-  <div id="app">
+  <section id="mainMenu" class="main-menu">
+    <div class="main-menu-backdrop"></div>
+    <div class="main-menu-panel">
+      <div class="main-menu-emblem">♜</div>
+      <small>ROYAUMES DES CENDRES</small>
+      <h1>Ashen Kingdoms</h1>
+      <p>Choisissez une lignée ou fondez un nouveau royaume maudit.</p>
+      <div id="profileList" class="profile-list"></div>
+      <div class="profile-create">
+        <input id="profileNameInput" type="text" maxlength="24" placeholder="Nom du royaume" />
+        <button id="createProfileButton">Créer un royaume</button>
+      </div>
+      <button id="optionsButton" class="menu-secondary">Options</button>
+      <section id="optionsPanel" class="options-panel hidden">
+        <label><span>Son</span><input id="soundToggle" type="checkbox" /></label>
+        <label><span>Notifications</span><input id="notificationToggle" type="checkbox" /></label>
+      </section>
+    </div>
+  </section>
+
+  <div id="app" class="hidden">
     <header class="topbar">
       <div class="brand"><span class="brand-mark">♜</span><div><strong>Ashen Kingdoms</strong><small>Royaume des cendres</small></div></div>
       <div class="resources" aria-label="Ressources">
