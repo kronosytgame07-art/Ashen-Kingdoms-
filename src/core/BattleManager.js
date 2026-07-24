@@ -1,13 +1,17 @@
 import { UNITS } from '../data/units.js';
-import { BATTLE_CONFIG, ENEMY_BUILDINGS } from '../data/battle.js';
+import { BATTLE_CONFIG, ENEMY_BUILDINGS, resolveEnemyPositions } from '../data/battle.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const dist  = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 export class BattleManager {
   constructor() { this.state = null; }
 
-  start(playerState) {
+  /**
+   * @param {object} playerState  - game state with .army counts
+   * @param {{ width: number, height: number }} [viewport] - pixel viewport; if omitted, fallback to 800×600
+   */
+  start(playerState, viewport = { width: 800, height: 600 }) {
     const available = Object.fromEntries(Object.keys(UNITS).map((t) => [t, playerState.army?.[t] ?? 0]));
     if (Object.values(available).every((n) => n <= 0)) return { ok: false, reason: 'Votre armée est vide' };
     this.state = {
@@ -17,7 +21,8 @@ export class BattleManager {
       timeLeft: BATTLE_CONFIG.durationSeconds,
       available,
       deployed: [],
-      buildings: ENEMY_BUILDINGS.map((b) => ({ ...b, cooldownLeft: 0 })),
+      // resolve fractional positions to real pixel coords once
+      buildings: resolveEnemyPositions(ENEMY_BUILDINGS, viewport).map((b) => ({ ...b, cooldownLeft: 0 })),
       effects: [],
       selectedUnit: Object.keys(available).find((t) => available[t] > 0) ?? null,
       result: null,
@@ -32,8 +37,7 @@ export class BattleManager {
     return true;
   }
 
-  /** Deploy a unit at screen (x,y) within viewport bounds. */
-  deploy(x, y, viewport) {
+  deploy(x, y, viewport = { width: 800, height: 600 }) {
     const battle = this.state;
     const type = battle?.selectedUnit;
     if (!battle?.active || !type || battle.available[type] <= 0) return false;
@@ -43,8 +47,8 @@ export class BattleManager {
       id: `${type}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       type,
       movementType: unit.movementType ?? 'ground',
-      x: clamp(x, 24, (viewport?.width ?? 800) - 24),
-      y: clamp(y, 24, (viewport?.height ?? 600) - 24),
+      x: clamp(x, 24, (viewport.width ?? 800) - 24),
+      y: clamp(y, 24, (viewport.height ?? 600) - 24),
       hp: unit.hp ?? unit.stats?.hp ?? 120,
       maxHp: unit.hp ?? unit.stats?.hp ?? 120,
       attackCooldown: 0,
@@ -59,7 +63,6 @@ export class BattleManager {
     battle.elapsed += dt;
     battle.timeLeft = Math.max(0, BATTLE_CONFIG.durationSeconds - battle.elapsed);
 
-    // — unit AI
     for (const unit of battle.deployed) {
       if (unit.dead) continue;
       const target = this._closestBuilding(unit);
@@ -79,7 +82,6 @@ export class BattleManager {
       }
     }
 
-    // — trap triggers
     for (const b of battle.buildings) {
       if (!b.trap || b.triggered) continue;
       const victims = battle.deployed.filter(
@@ -95,7 +97,6 @@ export class BattleManager {
       battle.effects.push({ x: b.x, y: b.y, life: 0.5, kind: 'trap' });
     }
 
-    // — defense towers shoot
     for (const b of battle.buildings) {
       if (b.hp <= 0 || !b.defense) continue;
       b.cooldownLeft = Math.max(0, b.cooldownLeft - dt);
@@ -131,15 +132,14 @@ export class BattleManager {
 
   _pickTarget(building, candidates) {
     if (!candidates.length) return null;
-    if (building.defense.targetPriority === 'highestHp') return [...candidates].sort((a,b)=>b.hp-a.hp)[0];
-    if (building.defense.targetPriority === 'cluster') {
-      return [...candidates].sort((a,b)=>this._clusterScore(b,candidates)-this._clusterScore(a,candidates))[0];
-    }
-    return [...candidates].sort((a,b)=>dist(a,building)-dist(b,building))[0];
+    if (building.defense.targetPriority === 'highestHp') return [...candidates].sort((a,b) => b.hp-a.hp)[0];
+    if (building.defense.targetPriority === 'cluster')
+      return [...candidates].sort((a,b) => this._clusterScore(b,candidates) - this._clusterScore(a,candidates))[0];
+    return [...candidates].sort((a,b) => dist(a,building) - dist(b,building))[0];
   }
 
   _clusterScore(unit, units) {
-    return units.reduce((s,other)=>s+(dist(unit,other)<=58?1:0),0);
+    return units.reduce((s, other) => s + (dist(unit,other) <= 58 ? 1 : 0), 0);
   }
 
   finish() {
@@ -147,13 +147,13 @@ export class BattleManager {
     if (!battle?.active) return battle?.result ?? null;
     battle.active = false;
     const scoring = battle.buildings.filter((b) => !b.trap);
-    const totalHp = scoring.reduce((s,b)=>s+b.maxHp, 0);
-    const remainHp = scoring.reduce((s,b)=>s+Math.max(0,b.hp), 0);
+    const totalHp  = scoring.reduce((s,b) => s + b.maxHp, 0);
+    const remainHp = scoring.reduce((s,b) => s + Math.max(0, b.hp), 0);
     const destruction = Math.round((1 - remainHp / totalHp) * 100);
-    const throneDown = battle.buildings.find((b)=>b.id==='enemy-throne')?.hp <= 0;
+    const throneDown  = battle.buildings.find((b) => b.id === 'enemy-throne')?.hp <= 0;
     const stars = destruction === 100 ? 3 : throneDown ? 2 : destruction >= 50 ? 1 : 0;
     const ratio = destruction / 100;
-    const loot = Object.fromEntries(Object.entries(BATTLE_CONFIG.loot).map(([k,v])=>[k,Math.round(v*ratio)]));
+    const loot = Object.fromEntries(Object.entries(BATTLE_CONFIG.loot).map(([k,v]) => [k, Math.round(v * ratio)]));
     battle.result = { destruction, stars, loot };
     return battle.result;
   }
