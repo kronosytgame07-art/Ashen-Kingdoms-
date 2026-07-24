@@ -1,7 +1,7 @@
 import { BUILDINGS, resourceCaps, upgradeCost, upgradeTime } from '../data/buildings.js';
 import { QUESTS, isBuildingUnlocked, maxLevelFor } from '../data/progression.js';
 import { UNITS, armyCounts } from '../data/units.js';
-import { resolveEnemyPositions } from '../data/battle.js';
+import { BATTLE_CONFIG } from '../data/battle.js';
 import { Grid } from './Grid.js';
 import { SaveManager } from './SaveManager.js';
 import { AssetManager } from './AssetManager.js';
@@ -305,7 +305,6 @@ export class Game {
 
   startBattle() {
     const army = armyCounts(this.state);
-    // resolve fractional coords to real pixels now that viewport is known
     const vp = this.renderer.viewport();
     const result = this.battle.start({ ...this.state, army }, vp);
     if (!result.ok) return this.ui.toast(result.reason, 'error');
@@ -500,7 +499,6 @@ export class Game {
     const now = performance.now();
     this.interaction.collectionPopups = this.interaction.collectionPopups.filter((p) => now - p.createdAt < 1200);
     this.interaction.troopTransfers   = this.interaction.troopTransfers.filter((t) => now - t.createdAt < 1400);
-    // emit building:ready for constructions that just finished
     for (const b of this.state.buildings) {
       if (b.readyAt > 0 && b.readyAt <= Date.now() && !b._readyEmitted) {
         b._readyEmitted = true;
