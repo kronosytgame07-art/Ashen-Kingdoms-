@@ -8,6 +8,12 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div id="portraitBlocker" class="portrait-blocker" aria-live="polite">
+    <div class="rotate-device" aria-hidden="true">↻</div>
+    <h1>Tournez votre appareil</h1>
+    <p>Ashen Kingdoms se joue uniquement en mode paysage.</p>
+  </div>
+
   <div id="app">
     <header class="topbar">
       <div class="brand">
@@ -43,11 +49,8 @@
         </div>
       </section>
 
-      <aside class="zoom-controls">
-        <button id="zoomIn" aria-label="Zoomer">+</button>
-        <button id="zoomOut" aria-label="Dézoomer">−</button>
-        <button id="centerCamera" aria-label="Recentrer">⌂</button>
-      </aside>
+      <button id="centerCamera" class="center-camera" aria-label="Recentrer la caméra">⌂</button>
+      <div id="gestureHint" class="gesture-hint">Pincez avec deux doigts pour zoomer</div>
     </main>
 
     <nav class="buildbar" aria-label="Construction">
@@ -55,7 +58,7 @@
       <button class="build-button" data-building="lumberMill"><span class="build-icon">♣</span><strong>Scierie</strong><small>100 or</small></button>
       <button class="build-button" data-building="essenceWell"><span class="build-icon">✦</span><strong>Puits</strong><small>160 or</small></button>
       <button class="build-button" data-building="barracks"><span class="build-icon">⚔</span><strong>Caserne</strong><small>220 bois</small></button>
-      <button class="build-button" data-building="wall"><span class="build-icon">▥</span><strong>Mur</strong><small>25 or</small></button>
+      <button class="build-button" data-building="wall"><span class="build-icon">▥</span><strong>Rempart</strong><small>25 or / segment</small></button>
     </nav>
 
     <div id="toast" class="toast" role="status"></div>
