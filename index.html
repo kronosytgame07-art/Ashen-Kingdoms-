@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#120f18" />
+  <title>Ashen Kingdoms</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">♜</span>
+        <div><strong>Ashen Kingdoms</strong><small>Prototype du royaume</small></div>
+      </div>
+      <div class="resources" aria-label="Ressources">
+        <div class="resource gold"><span>●</span><b id="goldValue">0</b></div>
+        <div class="resource wood"><span>◆</span><b id="woodValue">0</b></div>
+        <div class="resource essence"><span>✦</span><b id="essenceValue">0</b></div>
+      </div>
+    </header>
+
+    <main class="game-shell">
+      <canvas id="gameCanvas" aria-label="Village Ashen Kingdoms"></canvas>
+      <div class="vignette"></div>
+
+      <section id="objectiveCard" class="objective-card">
+        <span class="objective-icon">☠</span>
+        <div><small>OBJECTIF</small><strong id="objectiveText">Construisez une mine d’or</strong></div>
+      </section>
+
+      <section id="selectionPanel" class="selection-panel hidden">
+        <div>
+          <small id="selectionType">BÂTIMENT</small>
+          <h2 id="selectionName">Hôtel de Ville</h2>
+          <p id="selectionInfo">Niveau 1</p>
+        </div>
+        <div class="selection-actions">
+          <button id="moveButton" class="secondary">Déplacer</button>
+          <button id="upgradeButton">Améliorer</button>
+          <button id="removeButton" class="danger">Retirer</button>
+        </div>
+      </section>
+
+      <aside class="zoom-controls">
+        <button id="zoomIn" aria-label="Zoomer">+</button>
+        <button id="zoomOut" aria-label="Dézoomer">−</button>
+        <button id="centerCamera" aria-label="Recentrer">⌂</button>
+      </aside>
+    </main>
+
+    <nav class="buildbar" aria-label="Construction">
+      <button class="build-button" data-building="goldMine"><span class="build-icon">⛏</span><strong>Mine d’or</strong><small>120 bois</small></button>
+      <button class="build-button" data-building="lumberMill"><span class="build-icon">♣</span><strong>Scierie</strong><small>100 or</small></button>
+      <button class="build-button" data-building="essenceWell"><span class="build-icon">✦</span><strong>Puits</strong><small>160 or</small></button>
+      <button class="build-button" data-building="barracks"><span class="build-icon">⚔</span><strong>Caserne</strong><small>220 bois</small></button>
+      <button class="build-button" data-building="wall"><span class="build-icon">▥</span><strong>Mur</strong><small>25 or</small></button>
+    </nav>
+
+    <div id="toast" class="toast" role="status"></div>
+  </div>
+  <script src="src/game.js"></script>
+</body>
+</html>

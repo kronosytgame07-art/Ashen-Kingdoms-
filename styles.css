@@ -1,0 +1,90 @@
+:root {
+  color-scheme: dark;
+  --bg: #100d15;
+  --panel: rgba(20, 16, 27, 0.92);
+  --panel-2: rgba(34, 27, 43, 0.94);
+  --line: rgba(176, 133, 255, 0.28);
+  --violet: #a66cff;
+  --violet-2: #6e3eb8;
+  --gold: #e7bb55;
+  --danger: #b4424e;
+  --text: #f5eefc;
+  --muted: #b9abc8;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--text); }
+button { font: inherit; color: inherit; }
+#app { height: 100%; display: grid; grid-template-rows: auto 1fr auto; background: radial-gradient(circle at 50% 35%, #2d2440 0%, #120e18 65%); }
+
+.topbar {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: max(10px, env(safe-area-inset-top)) 18px 10px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(24, 19, 31, .98), rgba(15, 12, 20, .94));
+  z-index: 10;
+  box-shadow: 0 8px 30px rgba(0,0,0,.35);
+}
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: linear-gradient(145deg, #4f2b75, #1d1428); border: 1px solid #8051b9; font-size: 24px; box-shadow: inset 0 0 18px rgba(166,108,255,.18), 0 0 18px rgba(113,63,167,.22); }
+.brand strong { display: block; letter-spacing: .04em; white-space: nowrap; }
+.brand small { color: var(--muted); display: block; font-size: 11px; }
+.resources { display: flex; gap: 8px; }
+.resource { min-width: 94px; height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 999px; background: rgba(0,0,0,.28); box-shadow: inset 0 0 16px rgba(0,0,0,.28); }
+.resource span { font-size: 18px; }
+.resource.gold span { color: var(--gold); }
+.resource.wood span { color: #bc8a50; }
+.resource.essence span { color: #b982ff; text-shadow: 0 0 12px #8d4fe0; }
+
+.game-shell { position: relative; min-height: 0; overflow: hidden; }
+#gameCanvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#gameCanvas:active { cursor: grabbing; }
+.vignette { pointer-events: none; position: absolute; inset: 0; box-shadow: inset 0 0 130px 25px rgba(0,0,0,.65); }
+
+.objective-card { position: absolute; top: 16px; left: 16px; display: flex; align-items: center; gap: 12px; max-width: min(340px, calc(100vw - 110px)); padding: 11px 14px; border-radius: 14px; border: 1px solid rgba(166,108,255,.32); background: rgba(16,12,23,.88); backdrop-filter: blur(10px); box-shadow: 0 12px 35px rgba(0,0,0,.35); }
+.objective-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: #39234e; color: #c58cff; }
+.objective-card small { display: block; color: #b982ff; font-size: 10px; letter-spacing: .13em; }
+.objective-card strong { display: block; font-size: 13px; margin-top: 2px; }
+
+.selection-panel { position: absolute; right: 18px; bottom: 18px; width: min(360px, calc(100vw - 36px)); padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); backdrop-filter: blur(14px); box-shadow: 0 18px 48px rgba(0,0,0,.45); transition: .2s ease; }
+.selection-panel.hidden { opacity: 0; transform: translateY(20px); pointer-events: none; }
+.selection-panel small { color: var(--violet); letter-spacing: .12em; font-weight: 800; }
+.selection-panel h2 { margin: 4px 0; font-size: 21px; }
+.selection-panel p { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+.selection-actions { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 8px; }
+.selection-actions button, .zoom-controls button { border: 1px solid #784caf; background: linear-gradient(180deg, #7246a3, #4a2d6c); border-radius: 10px; min-height: 40px; font-weight: 800; box-shadow: inset 0 1px rgba(255,255,255,.12), 0 5px 14px rgba(0,0,0,.25); }
+.selection-actions .secondary { border-color: #555064; background: linear-gradient(180deg, #494351, #302b37); }
+.selection-actions .danger { border-color: #8c3845; background: linear-gradient(180deg, #8e3947, #59242d); }
+.selection-actions button:disabled { opacity: .4; filter: grayscale(1); }
+
+.zoom-controls { position: absolute; right: 18px; top: 18px; display: grid; gap: 8px; }
+.zoom-controls button { width: 42px; min-height: 42px; font-size: 21px; background: rgba(23,18,30,.9); border-color: rgba(166,108,255,.35); }
+
+.buildbar { display: flex; justify-content: center; gap: 8px; padding: 9px 12px max(9px, env(safe-area-inset-bottom)); overflow-x: auto; border-top: 1px solid var(--line); background: linear-gradient(180deg, rgba(15,12,20,.96), rgba(24,18,31,.99)); box-shadow: 0 -12px 30px rgba(0,0,0,.28); z-index: 10; }
+.build-button { flex: 0 0 112px; min-height: 72px; display: grid; grid-template-columns: 34px 1fr; grid-template-rows: 1fr 1fr; align-items: center; column-gap: 7px; padding: 8px 10px; border-radius: 13px; border: 1px solid rgba(255,255,255,.1); background: linear-gradient(160deg, #2c2434, #17131d); box-shadow: inset 0 1px rgba(255,255,255,.06); text-align: left; }
+.build-button.active { border-color: #aa73ef; box-shadow: inset 0 0 20px rgba(166,108,255,.18), 0 0 15px rgba(166,108,255,.15); transform: translateY(-2px); }
+.build-button:disabled { opacity: .42; }
+.build-icon { grid-row: 1 / 3; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #3b2a4b; color: #d2a5ff; font-size: 20px; }
+.build-button strong { align-self: end; font-size: 12px; white-space: nowrap; }
+.build-button small { align-self: start; color: var(--muted); font-size: 10px; }
+.toast { position: fixed; left: 50%; bottom: 104px; transform: translate(-50%, 15px); opacity: 0; pointer-events: none; padding: 10px 16px; border: 1px solid rgba(166,108,255,.35); border-radius: 999px; background: rgba(12,9,16,.94); color: white; font-weight: 700; transition: .2s ease; z-index: 30; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 700px) {
+  .topbar { min-height: 62px; padding-left: 10px; padding-right: 10px; }
+  .brand small { display: none; }
+  .brand strong { font-size: 13px; }
+  .brand-mark { width: 35px; height: 35px; font-size: 19px; }
+  .resources { gap: 4px; }
+  .resource { min-width: 64px; height: 34px; padding: 0 8px; gap: 5px; font-size: 12px; }
+  .resource span { font-size: 13px; }
+  .objective-card { top: 10px; left: 10px; }
+  .zoom-controls { top: 10px; right: 10px; }
+  .selection-panel { bottom: 10px; right: 10px; width: calc(100vw - 20px); }
+  .buildbar { justify-content: flex-start; }
+  .build-button { flex-basis: 102px; }
+}
