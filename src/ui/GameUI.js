@@ -7,19 +7,22 @@ export class GameUI {
     this.definitions = definitions;
     this.$ = (id) => document.getElementById(id);
     this.toastTimer = null;
+    this.handlers = null;
+    this.contextBuildingId = null;
   }
 
   bind(handlers) {
+    this.handlers = handlers;
     document.querySelectorAll('.build-button').forEach((button) => button.addEventListener('click', () => handlers.onBuild(button.dataset.building)));
-    document.querySelectorAll('.unit-button').forEach((button) => button.addEventListener('click', () => handlers.onTrain(button.dataset.unit)));
     document.querySelectorAll('.deploy-unit').forEach((button) => button.addEventListener('click', () => handlers.onSelectBattleUnit(button.dataset.unit)));
-    this.$('moveButton').addEventListener('click', handlers.onMove);
     this.$('upgradeButton').addEventListener('click', handlers.onUpgrade);
     this.$('removeButton').addEventListener('click', handlers.onRemove);
     this.$('centerCamera').addEventListener('click', handlers.onCenter);
     this.$('attackButton').addEventListener('click', handlers.onAttack);
     this.$('endBattleButton').addEventListener('click', handlers.onEndBattle);
     this.$('returnVillageButton').addEventListener('click', handlers.onReturnVillage);
+    this.$('closeContextButton').addEventListener('click', () => this.closeContext());
+    this.$('contextBackdrop').addEventListener('click', () => this.closeContext());
   }
 
   toast(message, kind = 'info') {
@@ -28,10 +31,79 @@ export class GameUI {
     clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
   }
 
+  closeContext() {
+    this.contextBuildingId = null;
+    this.$('buildingContext').classList.add('hidden');
+    this.$('contextBackdrop').classList.add('hidden');
+  }
+
+  openContext(state, building) {
+    const definition = this.definitions[building.type];
+    if (!definition?.panel) return false;
+    this.contextBuildingId = building.id;
+    this.$('contextKind').textContent = definition.panel === 'barracks' ? 'ENTRAÎNEMENT' : 'RASSEMBLEMENT';
+    this.$('contextTitle').textContent = definition.name;
+    this.$('contextDescription').textContent = definition.description;
+    this.renderContextBody(state, building);
+    this.$('contextBackdrop').classList.remove('hidden');
+    this.$('buildingContext').classList.remove('hidden');
+    return true;
+  }
+
+  renderContextBody(state, building) {
+    const body = this.$('contextBody');
+    body.replaceChildren();
+    const definition = this.definitions[building.type];
+
+    if (definition.panel === 'barracks') {
+      const capacity = armyCapacity(state);
+      const used = armyHousing(state);
+      const status = document.createElement('div');
+      status.className = 'context-status';
+      const queue = state.trainingQueue ?? [];
+      const queueText = queue.length ? `${UNITS[queue[0].type].name} · ${Math.max(0, Math.ceil((queue[0].readyAt - Date.now()) / 1000))} s · ${queue.length} en attente` : 'File vide';
+      status.innerHTML = `<strong>Armée ${used} / ${capacity}</strong><small>${queueText}</small>`;
+      body.append(status);
+
+      const list = document.createElement('div');
+      list.className = 'context-unit-list';
+      for (const [type, unit] of Object.entries(UNITS)) {
+        const button = document.createElement('button');
+        button.className = 'context-unit-button';
+        const unlocked = building.level >= unit.unlockBarracksLevel && isUnitUnlocked(type, state);
+        const affordable = (state.resources.essence ?? 0) >= unit.cost.essence;
+        button.disabled = !unlocked || !affordable;
+        button.innerHTML = `<span>${type === 'skeleton' ? '☠' : type === 'ghoul' ? '♟' : '✦'}</span><div><strong>${unit.name}</strong><small>${unit.cost.essence} âmes · ${unit.trainTime}s · place ${unit.housing}</small></div>`;
+        button.addEventListener('click', () => this.handlers.onTrain(type, building.id));
+        list.append(button);
+      }
+      body.append(list);
+    }
+
+    if (definition.panel === 'campfire') {
+      const capacity = definition.housing.base + (building.level - 1) * definition.housing.perLevel;
+      const assigned = building.garrison ?? {};
+      const used = Object.entries(assigned).reduce((sum, [type, count]) => sum + (UNITS[type]?.housing ?? 0) * count, 0);
+      const status = document.createElement('div');
+      status.className = 'context-status';
+      status.innerHTML = `<strong>Capacité ${used} / ${capacity}</strong><small>Troupes rassemblées autour du brasier</small>`;
+      body.append(status);
+
+      const list = document.createElement('div');
+      list.className = 'camp-roster';
+      for (const [type, unit] of Object.entries(UNITS)) {
+        const row = document.createElement('div');
+        row.innerHTML = `<span>${type === 'skeleton' ? '☠' : type === 'ghoul' ? '♟' : '✦'}</span><strong>${unit.name}</strong><b>${assigned[type] ?? 0}</b>`;
+        list.append(row);
+      }
+      body.append(list);
+    }
+  }
+
   setBattleMode(active) {
+    this.closeContext();
     this.$('battleHud').classList.toggle('hidden', !active);
     this.$('deploymentBar').classList.toggle('hidden', !active);
-    this.$('trainingPanel').classList.toggle('hidden', active);
     document.querySelector('.buildbar').classList.toggle('hidden', active);
     this.$('objectiveCard').classList.toggle('hidden', active);
     this.$('selectionPanel').classList.add('hidden');
@@ -69,31 +141,6 @@ export class GameUI {
     });
   }
 
-  updateTraining(state) {
-    const capacity = armyCapacity(state);
-    const used = armyHousing(state);
-    this.$('armyCapacity').textContent = `${used} / ${capacity}`;
-
-    const queue = state.trainingQueue ?? [];
-    if (!queue.length) this.$('trainingQueue').textContent = 'File vide';
-    else {
-      const first = queue[0];
-      const remaining = Math.max(0, Math.ceil((first.readyAt - Date.now()) / 1000));
-      this.$('trainingQueue').textContent = `${UNITS[first.type].name} · ${remaining}s · ${queue.length} en attente`;
-    }
-
-    document.querySelectorAll('.unit-button').forEach((button) => {
-      const type = button.dataset.unit;
-      const unit = UNITS[type];
-      const unlocked = isUnitUnlocked(type, state);
-      const affordable = (state.resources.essence ?? 0) >= unit.cost.essence;
-      button.disabled = !unlocked || !affordable || capacity <= 0;
-      button.classList.toggle('locked', !unlocked);
-      const amount = state.army?.[type] ?? 0;
-      button.title = unlocked ? `${unit.description} · Armée : ${amount}` : `Caserne niveau ${unit.unlockBarracksLevel} requise`;
-    });
-  }
-
   update(state, selectedId, placementType, currentQuest = null) {
     const caps = resourceCaps(state);
     ['gold','wood','essence'].forEach((key) => {
@@ -103,16 +150,20 @@ export class GameUI {
     document.querySelectorAll('.build-button').forEach((button) => {
       const type = button.dataset.building;
       const definition = this.definitions[type];
-      const unlocked = isBuildingUnlocked(type, state);
+      const unlocked = definition && isBuildingUnlocked(type, state);
       button.classList.toggle('active', placementType === type);
       button.classList.toggle('locked', !unlocked);
-      button.disabled = !unlocked || Object.entries(definition.cost).some(([key, value]) => state.resources[key] < value);
+      button.disabled = !definition || !unlocked || Object.entries(definition.cost).some(([key, value]) => state.resources[key] < value);
       button.title = unlocked ? definition.description : 'Débloqué au niveau supérieur du Trône corrompu';
     });
 
-    this.updateTraining(state);
-
     if (this.$('objectiveText')) this.$('objectiveText').textContent = currentQuest?.text ?? `Trône corrompu niveau ${townHallLevel(state)} · Développez librement votre royaume`;
+
+    if (this.contextBuildingId) {
+      const contextBuilding = state.buildings.find((item) => item.id === this.contextBuildingId);
+      if (contextBuilding) this.renderContextBody(state, contextBuilding);
+      else this.closeContext();
+    }
 
     const building = state.buildings.find((item) => item.id === selectedId);
     const panel = this.$('selectionPanel');
@@ -123,7 +174,7 @@ export class GameUI {
     panel.classList.remove('hidden');
     this.$('selectionType').textContent = building.readyAt > Date.now() ? 'CONSTRUCTION' : definition.category?.toUpperCase() ?? 'BÂTIMENT';
     this.$('selectionName').textContent = definition.name;
-    const production = definition.production ? ` · +${Math.round(definition.production.perSecond * (1 + (building.level - 1) * .35) * 60)} ${RESOURCE_LABELS[definition.production.resource]}/min` : '';
+    const production = definition.production ? ` · ${Math.floor(building.stored ?? 0)} ${RESOURCE_LABELS[definition.production.resource]} en réserve` : '';
     const limit = building.type === 'townHall' ? definition.maxLevel : allowedMax;
     this.$('selectionInfo').textContent = `Niveau ${building.level}/${limit}${production} · Amélioration ${cost.gold} or / ${cost.wood} bois`;
     this.$('selectionDescription').textContent = definition.description;
