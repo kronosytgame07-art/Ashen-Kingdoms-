@@ -76,6 +76,57 @@ export class Renderer {
     }
   }
 
+  drawVillageUnit(x, y, type, scale = 1, alpha = 1) {
+    const c=this.ctx;
+    const radius=type==='ghoul'?6.5:type==='necromancer'?5.8:5.2;
+    const fill=type==='ghoul'?'#778267':type==='necromancer'?'#a36fe4':'#d6d0c4';
+    c.save(); c.globalAlpha=alpha; c.translate(x,y);
+    c.beginPath(); c.ellipse(0,3*scale,7*scale,3.2*scale,0,0,Math.PI*2); c.fillStyle='rgba(0,0,0,.34)'; c.fill();
+    c.beginPath(); c.arc(0,0,radius*scale,0,Math.PI*2); c.fillStyle=fill; c.fill(); c.strokeStyle='#16111a'; c.lineWidth=Math.max(1,1.5*scale); c.stroke();
+    if(type==='necromancer'){ c.strokeStyle='#ca9cff'; c.beginPath(); c.moveTo(4*scale,-2*scale); c.lineTo(7*scale,-10*scale); c.stroke(); }
+    else if(type==='skeleton'){ c.strokeStyle='#8a7b6a'; c.beginPath(); c.moveTo(4*scale,-1*scale); c.lineTo(9*scale,-9*scale); c.stroke(); }
+    c.restore();
+  }
+
+  drawCampfireGarrison(building, state, time) {
+    if(building.type!=='campfire' || building.readyAt>Date.now()) return;
+    const roster=[];
+    for(const [type,count] of Object.entries(building.garrison ?? {})) for(let i=0;i<count;i+=1) roster.push(type);
+    const shown=roster.slice(0,12);
+    const {x,y,scale}=this.buildingAnchor(building,state);
+    const c=this.ctx;
+    c.save(); c.translate(x,y-23*scale);
+    const pulse=.9+Math.sin(time/180)*.12;
+    c.shadowColor='#9dff7a'; c.shadowBlur=18*scale; c.fillStyle='rgba(119,255,105,.9)';
+    c.beginPath(); c.arc(0,0,6*scale*pulse,0,Math.PI*2); c.fill(); c.shadowBlur=0;
+    c.fillStyle='rgba(175,118,255,.75)'; c.beginPath(); c.arc(0,-6*scale,4*scale*pulse,0,Math.PI*2); c.fill();
+    c.restore();
+    shown.forEach((type,index)=>{
+      const ring=Math.floor(index/6), slot=index%6, angle=(Math.PI*2/6)*slot+(ring*.4);
+      const radius=(28+ring*13)*scale;
+      const sway=Math.sin(time/420+index)*1.5*scale;
+      this.drawVillageUnit(x+Math.cos(angle)*radius,y+Math.sin(angle)*radius*.46+sway,type,scale*.9,.95);
+    });
+    if(roster.length>shown.length){
+      c.save(); c.translate(x,y+18*scale); c.fillStyle='rgba(13,9,17,.9)'; c.strokeStyle='#9dff7a'; c.lineWidth=1.5*scale; c.beginPath(); c.arc(0,0,12*scale,0,Math.PI*2); c.fill(); c.stroke(); c.fillStyle='#fff'; c.textAlign='center'; c.textBaseline='middle'; c.font=`800 ${Math.max(8,9*scale)}px sans-serif`; c.fillText(`+${roster.length-shown.length}`,0,0); c.restore();
+    }
+  }
+
+  drawTroopTransfers(state, interaction, time) {
+    const transfers=interaction.troopTransfers ?? [];
+    for(const transfer of transfers){
+      const from=state.buildings.find((item)=>item.id===transfer.fromId);
+      const to=state.buildings.find((item)=>item.id===transfer.toId);
+      if(!from||!to) continue;
+      const progress=Math.min(1,Math.max(0,(time-transfer.createdAt)/(transfer.duration ?? 1200)));
+      const start=this.buildingAnchor(from,state), end=this.buildingAnchor(to,state);
+      const eased=1-Math.pow(1-progress,3);
+      const x=start.x+(end.x-start.x)*eased;
+      const y=start.y+(end.y-start.y)*eased-Math.sin(progress*Math.PI)*18*state.camera.zoom;
+      this.drawVillageUnit(x,y-18*state.camera.zoom,transfer.type,state.camera.zoom,1-progress*.1);
+    }
+  }
+
   building(building, state, selected, time, lifted = false) {
     const d=this.definitions[building.type], camera=state.camera, scale=camera.zoom;
     this.footprint(building,camera,selected);
@@ -91,6 +142,7 @@ export class Renderer {
     if(building.readyAt>Date.now()){ c.fillStyle='rgba(9,7,12,.9)'; c.fillRect(-38*scale,-height-28*scale,76*scale,21*scale); c.fillStyle='#dfc4ff'; c.textAlign='center'; c.font=`700 ${Math.max(10,11*scale)}px sans-serif`; c.fillText(`${Math.ceil((building.readyAt-Date.now())/1000)}s`,0,-height-13*scale); }
     c.restore();
     this.drawCollectionBubble(building,state,time);
+    this.drawCampfireGarrison(building,state,time);
   }
 
   battleGround(time) {
@@ -144,6 +196,7 @@ export class Renderer {
     this.ground(state.camera,time);
     if(interaction.preview){ this.footprint(interaction.preview,state.camera,false,interaction.preview.valid); }
     [...state.buildings].sort((a,b)=>(a.col+a.row)-(b.col+b.row)).forEach((b)=>this.building(b,state,b.id===interaction.selectedId,time,b.id===interaction.liftedId));
+    this.drawTroopTransfers(state,interaction,time);
     this.drawCollectionPopups(interaction,state,time);
   }
 }
