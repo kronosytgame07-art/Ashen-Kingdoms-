@@ -7,6 +7,7 @@ import { AssetManager } from './AssetManager.js';
 import { Renderer } from './Renderer.js';
 import { Economy } from './Economy.js';
 import { TrainingManager } from './TrainingManager.js';
+import { BattleManager } from './BattleManager.js';
 import { GameUI } from '../ui/GameUI.js';
 
 const makeId = () => globalThis.crypto?.randomUUID?.() || `b-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -21,6 +22,7 @@ export class Game {
     this.renderer = new Renderer(canvas, this.grid, BUILDINGS, this.assets);
     this.economy = new Economy();
     this.training = new TrainingManager();
+    this.battle = new BattleManager();
     this.ui = new GameUI(BUILDINGS);
     this.state = this.saveManager.load(() => ({
       version: 2,
@@ -71,6 +73,10 @@ export class Game {
     this.canvas.addEventListener('pointerdown', (event) => {
       this.canvas.setPointerCapture(event.pointerId);
       const pos = position(event); this.pointers.set(event.pointerId, pos);
+      if (this.battle.state?.active) {
+        if (this.battle.deploy(pos.x, pos.y, this.renderer.viewport())) { this.ui.updateBattle(this.battle.state); this.dirty = true; }
+        return;
+      }
       if (this.pointers.size === 2) {
         const [a,b] = [...this.pointers.values()];
         this.pinch = { distance: Math.hypot(a.x-b.x,a.y-b.y), zoom: this.state.camera.zoom, center: { x:(a.x+b.x)/2, y:(a.y+b.y)/2 }, camera: { ...this.state.camera } };
@@ -81,6 +87,7 @@ export class Game {
     });
 
     this.canvas.addEventListener('pointermove', (event) => {
+      if (this.battle.state?.active) return;
       if (!this.pointers.has(event.pointerId)) return;
       const pos = position(event); this.pointers.set(event.pointerId, pos);
       if (this.pointers.size === 2 && this.pinch) {
@@ -105,13 +112,14 @@ export class Game {
 
     const endPointer = (event) => {
       const pos = position(event); this.pointers.delete(event.pointerId);
+      if (this.battle.state?.active) return;
       if (this.pointers.size < 2) this.pinch = null;
       if (this.drag && !this.drag.moved) this.handleTap(pos);
       this.drag = null; this.save();
     };
     this.canvas.addEventListener('pointerup', endPointer);
     this.canvas.addEventListener('pointercancel', endPointer);
-    this.canvas.addEventListener('wheel', (event) => { event.preventDefault(); this.state.camera.zoom = clamp(this.state.camera.zoom - Math.sign(event.deltaY)*.08,.55,1.65); this.dirty=true; }, { passive:false });
+    this.canvas.addEventListener('wheel', (event) => { if (this.battle.state?.active) return; event.preventDefault(); this.state.camera.zoom = clamp(this.state.camera.zoom - Math.sign(event.deltaY)*.08,.55,1.65); this.dirty=true; }, { passive:false });
     window.addEventListener('resize', () => { this.renderer.resize(); this.dirty=true; });
     window.addEventListener('beforeunload', () => this.save());
 
@@ -125,8 +133,47 @@ export class Game {
       onMove: () => { if(!this.interaction.selectedId)return; this.interaction.movingId=this.interaction.selectedId; this.interaction.selectedId=null; this.ui.toast('Choisissez le nouvel emplacement'); },
       onUpgrade: () => this.upgradeSelected(),
       onRemove: () => this.removeSelected(),
-      onCenter: () => { this.state.camera={x:0,y:-20,zoom:1}; this.dirty=true; }
+      onCenter: () => { this.state.camera={x:0,y:-20,zoom:1}; this.dirty=true; },
+      onAttack: () => this.startBattle(),
+      onSelectBattleUnit: (type) => { if (this.battle.selectUnit(type)) { this.ui.updateBattle(this.battle.state); this.dirty = true; } },
+      onEndBattle: () => this.finishBattle(),
+      onReturnVillage: () => this.returnToVillage()
     });
+  }
+
+  startBattle() {
+    const result = this.battle.start(this.state);
+    if (!result.ok) return this.ui.toast(result.reason, 'error');
+    this.ui.setBattleMode(true);
+    this.ui.hideBattleResult();
+    this.ui.updateBattle(this.battle.state);
+    this.ui.toast('Touchez le champ de bataille pour déployer vos troupes', 'success');
+    this.dirty = true;
+  }
+
+  finishBattle() {
+    const result = this.battle.finish();
+    if (!result) return;
+    this.applyBattleResult(result);
+  }
+
+  applyBattleResult(result) {
+    if (this.battle.state?.rewardApplied) return;
+    this.battle.state.rewardApplied = true;
+    for (const [resource, amount] of Object.entries(result.loot)) this.state.resources[resource] = (this.state.resources[resource] ?? 0) + amount;
+    for (const type of Object.keys(this.state.army)) this.state.army[type] = this.battle.state.available[type] ?? 0;
+    this.ui.updateBattle(this.battle.state);
+    this.ui.showBattleResult(result);
+    this.ui.toast(result.stars > 0 ? 'Raid terminé — butin récupéré' : 'Raid échoué', result.stars > 0 ? 'success' : 'error');
+    this.save();
+    this.dirty = true;
+  }
+
+  returnToVillage() {
+    this.battle.state = null;
+    this.ui.setBattleMode(false);
+    this.ui.hideBattleResult();
+    this.dirty = true;
   }
 
   trainUnit(type) {
@@ -219,11 +266,16 @@ export class Game {
     }
   }
 
-  currentQuest() {
-    return QUESTS.find((quest) => !this.state.completedQuests.includes(quest.id)) ?? null;
-  }
+  currentQuest() { return QUESTS.find((quest) => !this.state.completedQuests.includes(quest.id)) ?? null; }
 
   update(dt) {
+    if (this.battle.state?.active) {
+      const result = this.battle.update(dt, this.renderer.viewport());
+      if (result) this.applyBattleResult(result);
+      this.ui.updateBattle(this.battle.state);
+      this.dirty = true;
+      return;
+    }
     this.economy.applyProduction(this.state, dt);
     const completedUnits = this.training.update(this.state);
     if (completedUnits.length > 0) {
@@ -241,8 +293,8 @@ export class Game {
   loop(time) {
     const dt=Math.min(.1,(time-this.lastFrame)/1000); this.lastFrame=time; this.update(dt);
     if(this.dirty || time-this.lastUiUpdate>250){
-      this.renderer.render(this.state,this.interaction,time);
-      this.ui.update(this.state,this.interaction.selectedId,this.interaction.placementType,this.currentQuest());
+      this.renderer.render(this.state,this.interaction,time,this.battle.state);
+      if (!this.battle.state?.active && !this.battle.state?.result) this.ui.update(this.state,this.interaction.selectedId,this.interaction.placementType,this.currentQuest());
       this.lastUiUpdate=time; this.dirty=false;
     }
     requestAnimationFrame((next)=>this.loop(next));
