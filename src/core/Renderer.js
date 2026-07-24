@@ -49,7 +49,54 @@ export class Renderer {
     c.restore();
   }
 
-  render(state, interaction, time) {
+  battleGround(time) {
+    const c = this.ctx, v = this.viewport();
+    const gradient = c.createRadialGradient(v.width * .5, v.height * .48, 20, v.width * .5, v.height * .5, v.width * .7);
+    gradient.addColorStop(0, '#35283e'); gradient.addColorStop(.55, '#211925'); gradient.addColorStop(1, '#0d0a10');
+    c.fillStyle = gradient; c.fillRect(0,0,v.width,v.height);
+    c.save(); c.globalAlpha = .22;
+    for (let i=0;i<70;i+=1) { const x=(i*137+time*.012*(i%4+1))%v.width; const y=(i*71)%v.height; c.fillStyle=i%5?'#8f728f':'#c57bff'; c.fillRect(x,y,1.4,1.4); }
+    c.restore();
+    c.strokeStyle='rgba(146,104,164,.16)'; c.lineWidth=1;
+    for(let x=40;x<v.width;x+=64){ c.beginPath(); c.moveTo(x,0); c.lineTo(x-120,v.height); c.stroke(); }
+    for(let y=40;y<v.height;y+=50){ c.beginPath(); c.moveTo(0,y); c.lineTo(v.width,y+120); c.stroke(); }
+  }
+
+  battleBuilding(building) {
+    const c=this.ctx; const hpRatio=Math.max(0,building.hp/building.maxHp);
+    c.save(); c.translate(building.x,building.y);
+    c.beginPath(); c.ellipse(0,building.radius*.55,building.radius*1.15,building.radius*.48,0,0,Math.PI*2); c.fillStyle='rgba(0,0,0,.45)'; c.fill();
+    const body = building.type==='runeTower' ? '#30243a' : building.type==='townHall' ? '#241b2c' : '#3a2d35';
+    const accent = building.type==='runeTower' ? '#b982ff' : building.type==='townHall' ? '#d083ff' : '#b65a69';
+    c.fillStyle=body; c.strokeStyle='#0d0a10'; c.lineWidth=3; c.fillRect(-building.radius*.72,-building.radius,building.radius*1.44,building.radius*1.35); c.strokeRect(-building.radius*.72,-building.radius,building.radius*1.44,building.radius*1.35);
+    c.shadowColor=accent; c.shadowBlur=12; c.fillStyle=accent; c.fillRect(-building.radius*.18,-building.radius*.55,building.radius*.36,building.radius*.4); c.shadowBlur=0;
+    c.fillStyle='rgba(0,0,0,.72)'; c.fillRect(-building.radius,-building.radius-14,building.radius*2,6); c.fillStyle=hpRatio>.5?'#79dc9e':hpRatio>.25?'#e1b65b':'#d85461'; c.fillRect(-building.radius,-building.radius-14,building.radius*2*hpRatio,6);
+    c.restore();
+  }
+
+  battleUnit(unit) {
+    const c=this.ctx; const hpRatio=Math.max(0,unit.hp/unit.maxHp);
+    c.save(); c.translate(unit.x,unit.y); c.globalAlpha=unit.dead?.25:1;
+    c.beginPath(); c.arc(0,0,unit.type==='ghoul'?12:unit.type==='necromancer'?10:9,0,Math.PI*2);
+    c.fillStyle=unit.type==='ghoul'?'#806e58':unit.type==='necromancer'?'#9c6dde':'#d2ced7'; c.fill(); c.strokeStyle='#17121b'; c.lineWidth=2; c.stroke();
+    c.fillStyle='rgba(0,0,0,.7)'; c.fillRect(-12,-18,24,4); c.fillStyle='#6fd69a'; c.fillRect(-12,-18,24*hpRatio,4);
+    c.restore();
+  }
+
+  battleEffects(effects) {
+    const c=this.ctx;
+    for(const effect of effects){ c.save(); c.globalAlpha=Math.max(0,effect.life/.35); c.strokeStyle=effect.kind==='shot'?'#c88cff':'#ff9b7a'; c.lineWidth=3; c.beginPath(); c.arc(effect.x,effect.y,18*(1-effect.life/.35)+4,0,Math.PI*2); c.stroke(); c.restore(); }
+  }
+
+  renderBattle(battle, time) {
+    this.battleGround(time);
+    battle.buildings.filter((building)=>building.hp>0).forEach((building)=>this.battleBuilding(building));
+    battle.deployed.forEach((unit)=>this.battleUnit(unit));
+    this.battleEffects(battle.effects);
+  }
+
+  render(state, interaction, time, battle = null) {
+    if (battle?.active || battle?.result) { this.renderBattle(battle,time); return; }
     this.ground(state.camera,time);
     if(interaction.preview){ this.footprint(interaction.preview,state.camera,false,interaction.preview.valid); }
     [...state.buildings].sort((a,b)=>(a.col+a.row)-(b.col+b.row)).forEach((b)=>this.building(b,state,b.id===interaction.selectedId,time));
