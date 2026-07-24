@@ -40,7 +40,8 @@ export class Game {
       savedAt: Date.now()
     }));
     this.training.ensureState(this.state);
-    this.interaction = { selectedId: null, placementType: null, movingId: null, preview: null, liftedId: null };
+    this.economy.ensureExtractorState(this.state);
+    this.interaction = { selectedId: null, placementType: null, movingId: null, preview: null, liftedId: null, collectionPopups: [] };
     this.pointers = new Map();
     this.drag = null;
     this.pinch = null;
@@ -65,10 +66,9 @@ export class Game {
   }
 
   notifyOfflineProgress(result, trainedOffline = []) {
-    const total = Object.values(result.gained).reduce((sum, value) => sum + value, 0);
     if (trainedOffline.length > 0) this.ui.toast(`${trainedOffline.length} troupe(s) prête(s) pendant votre absence`, 'success');
     else if (result.completed > 0) this.ui.toast(`${result.completed} construction(s) terminée(s) pendant votre absence`, 'success');
-    else if (result.elapsedSeconds > 30 && total >= 1) this.ui.toast('Production hors ligne récupérée', 'success');
+    else if (result.elapsedSeconds > 30 && result.produced >= 1) this.ui.toast('Vos extracteurs ont continué à produire', 'success');
   }
 
   clearLongPress() {
@@ -249,8 +249,24 @@ export class Game {
 
   handleTap(pos) {
     const cell = this.grid.screenToGrid(pos.x,pos.y,this.state.camera,this.renderer.viewport());
-    if (this.interaction.placementType || this.interaction.movingId) this.place(cell);
-    else this.interaction.selectedId = this.grid.buildingAt(cell.col,cell.row,BUILDINGS,this.state.buildings)?.id || null;
+    if (this.interaction.placementType || this.interaction.movingId) {
+      this.place(cell);
+      return;
+    }
+    const building = this.grid.buildingAt(cell.col,cell.row,BUILDINGS,this.state.buildings);
+    if (building && BUILDINGS[building.type]?.extractor && building.readyAt <= Date.now()) {
+      const result = this.economy.collectExtractor(this.state, building);
+      if (result.ok) {
+        this.interaction.collectionPopups.push({ buildingId: building.id, amount: result.amount, resource: result.resource, createdAt: performance.now() });
+        this.ui.toast(`+${result.amount} ${BUILDINGS[building.type].name}`, 'success');
+        globalThis.navigator?.vibrate?.(18);
+        this.save();
+      } else {
+        this.interaction.selectedId = building.id;
+      }
+    } else {
+      this.interaction.selectedId = building?.id || null;
+    }
     this.dirty=true;
   }
 
@@ -270,6 +286,7 @@ export class Game {
       const definition=BUILDINGS[type];
       if(!this.economy.spend(this.state, definition.cost)) return this.ui.toast('Ressources insuffisantes','error');
       const building={id:makeId(),type,col:cell.col,row:cell.row,level:1,readyAt:Date.now()+definition.buildTime*1000};
+      if (definition.extractor) { building.storedResource = 0; building.lastProductionAt = Date.now(); }
       this.state.buildings.push(building); this.interaction.selectedId=building.id;
       if(!(type==='wall'&&keepWallMode)) this.interaction.placementType=null;
       this.ui.toast(`${definition.name} placé`,'success');
@@ -330,7 +347,7 @@ export class Game {
       this.dirty = true;
       return;
     }
-    this.economy.applyProduction(this.state, dt);
+    this.economy.applyExtractorProduction(this.state, dt);
     const completedUnits = this.training.update(this.state);
     if (completedUnits.length > 0) {
       const last = completedUnits.at(-1);
@@ -339,6 +356,8 @@ export class Game {
     }
     const caps = resourceCaps(this.state);
     for (const resource of Object.keys(this.state.resources)) this.state.resources[resource]=Math.min(caps[resource],this.state.resources[resource]);
+    const now = performance.now();
+    this.interaction.collectionPopups = this.interaction.collectionPopups.filter((popup) => now - popup.createdAt < 1200);
     this.refreshQuests();
   }
 
