@@ -1,5 +1,5 @@
 import { RESOURCE_LABELS, resourceCaps, upgradeCost } from '../data/buildings.js';
-import { isBuildingUnlocked, maxLevelFor, townHallLevel } from '../data/progression.js';
+import { isBuildingUnlocked, maxLevelFor, townHallLevel, requiredTownHallLevel } from '../data/progression.js';
 import { UNITS, armyCapacity, armyHousing, isUnitUnlocked } from '../data/units.js';
 
 const BUILD_CATEGORIES = [
@@ -16,6 +16,8 @@ const BUILD_ICONS = {
   runeTower: '♝', boneCatapult: '◉', soulSpire: '▲', cursedTrap: '✹', wall: '▥', clanCastle: '♜'
 };
 
+const UNIT_ICONS = { skeleton: '☠', ghoul: '♟', necromancer: '✦' };
+const unitIcon = (type) => UNIT_ICONS[type] ?? '◆';
 const resourceText = (cost = {}) => Object.entries(cost)
   .map(([resource, amount]) => `${amount} ${RESOURCE_LABELS[resource]?.toLowerCase() ?? resource}`)
   .join(' · ') || 'Gratuit';
@@ -65,7 +67,8 @@ export class GameUI {
     if (!definition?.panel) return false;
     this.closeBuildMenu();
     this.contextBuildingId = building.id;
-    this.$('contextKind').textContent = definition.panel === 'barracks' ? 'ENTRAÎNEMENT' : 'RASSEMBLEMENT';
+    const kinds = { barracks: 'ENTRAÎNEMENT', campfire: 'RASSEMBLEMENT', clanCastle: 'CLAN & RENFORTS' };
+    this.$('contextKind').textContent = kinds[definition.panel] ?? 'BÂTIMENT';
     this.$('contextTitle').textContent = definition.name;
     this.$('contextDescription').textContent = definition.description;
     this.renderContextBody(state, building);
@@ -79,49 +82,116 @@ export class GameUI {
     body.replaceChildren();
     const definition = this.definitions[building.type];
 
-    if (definition.panel === 'barracks') {
-      const capacity = armyCapacity(state);
-      const used = armyHousing(state);
-      const status = document.createElement('div');
-      status.className = 'context-status';
-      const queue = state.trainingQueue ?? [];
-      const queueText = queue.length ? `${UNITS[queue[0].type].name} · ${Math.max(0, Math.ceil((queue[0].readyAt - Date.now()) / 1000))} s · ${queue.length} en attente` : 'File vide';
-      status.innerHTML = `<strong>Armée ${used} / ${capacity}</strong><small>${queueText}</small>`;
-      body.append(status);
+    if (definition.panel === 'barracks') this.renderBarracksPanel(body, state, building);
+    if (definition.panel === 'campfire') this.renderCampfirePanel(body, state, building);
+    if (definition.panel === 'clanCastle') this.renderClanCastlePanel(body, state, building);
+  }
 
-      const list = document.createElement('div');
-      list.className = 'context-unit-list';
-      for (const [type, unit] of Object.entries(UNITS)) {
-        const button = document.createElement('button');
-        button.className = 'context-unit-button';
-        const unlocked = building.level >= unit.unlockBarracksLevel && isUnitUnlocked(type, state);
-        const affordable = (state.resources.essence ?? 0) >= unit.cost.essence;
-        button.disabled = !unlocked || !affordable;
-        button.innerHTML = `<span>${type === 'skeleton' ? '☠' : type === 'ghoul' ? '♟' : '✦'}</span><div><strong>${unit.name}</strong><small>${unit.cost.essence} âmes · ${unit.trainTime}s · place ${unit.housing}</small></div>`;
-        button.addEventListener('click', () => this.handlers.onTrain(type, building.id));
-        list.append(button);
-      }
-      body.append(list);
+  renderBarracksPanel(body, state, building) {
+    const capacity = armyCapacity(state);
+    const used = armyHousing(state);
+    const status = document.createElement('div');
+    status.className = 'context-status';
+    const queue = state.trainingQueue ?? [];
+    const queueText = queue.length ? `${UNITS[queue[0].type].name} · ${Math.max(0, Math.ceil((queue[0].readyAt - Date.now()) / 1000))} s · ${queue.length} en attente` : 'File vide';
+    status.innerHTML = `<strong>Armée ${used} / ${capacity}</strong><small>${queueText}</small>`;
+    body.append(status);
+
+    const list = document.createElement('div');
+    list.className = 'context-unit-list';
+    for (const [type, unit] of Object.entries(UNITS)) {
+      const button = document.createElement('button');
+      button.className = 'context-unit-button';
+      const unlocked = building.level >= unit.unlockBarracksLevel && isUnitUnlocked(type, state);
+      const affordable = (state.resources.essence ?? 0) >= unit.cost.essence;
+      button.disabled = !unlocked || !affordable;
+      button.innerHTML = `<span>${unitIcon(type)}</span><div><strong>${unit.name}</strong><small>${unit.cost.essence} âmes · ${unit.trainTime}s · place ${unit.housing}</small></div>`;
+      button.addEventListener('click', () => this.handlers.onTrain(type, building.id));
+      list.append(button);
+    }
+    body.append(list);
+  }
+
+  renderCampfirePanel(body, state, building) {
+    const definition = this.definitions[building.type];
+    const capacity = definition.housing.base + (building.level - 1) * definition.housing.perLevel;
+    const assigned = building.garrison ?? {};
+    const used = Object.entries(assigned).reduce((sum, [type, count]) => sum + (UNITS[type]?.housing ?? 0) * count, 0);
+    const status = document.createElement('div');
+    status.className = 'context-status';
+    status.innerHTML = `<strong>Capacité ${used} / ${capacity}</strong><small>Troupes rassemblées autour du brasier</small>`;
+    body.append(status);
+
+    const list = document.createElement('div');
+    list.className = 'camp-roster';
+    for (const [type, unit] of Object.entries(UNITS)) {
+      const row = document.createElement('div');
+      row.innerHTML = `<span>${unitIcon(type)}</span><strong>${unit.name}</strong><b>${assigned[type] ?? 0}</b>`;
+      list.append(row);
+    }
+    body.append(list);
+  }
+
+  renderClanCastlePanel(body, state, building) {
+    const config = this.definitions.clanCastle.reinforcementHousing;
+    const capacity = config.base + (building.level - 1) * config.perLevel;
+    const reinforcements = building.reinforcements ?? {};
+    const used = Object.entries(reinforcements).reduce((sum, [type, amount]) => sum + (UNITS[type]?.housing ?? 0) * amount, 0);
+    const clan = state.clan ?? {};
+
+    const status = document.createElement('div');
+    status.className = 'context-status';
+    status.innerHTML = `<strong>Renforts ${used} / ${capacity}</strong><small>${clan.id ? clan.name : 'Aucun clan rejoint'}</small>`;
+    body.append(status);
+
+    if (!clan.id) {
+      const form = document.createElement('form');
+      form.className = 'clan-create-form';
+      form.innerHTML = `<label><span>Fonder un clan</span><input name="clanName" maxlength="24" placeholder="Nom du clan" required /></label><button type="submit">Créer le clan</button>`;
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const name = new FormData(form).get('clanName');
+        this.handlers.onCreateClan(name);
+      });
+      body.append(form);
+      return;
     }
 
-    if (definition.panel === 'campfire') {
-      const capacity = definition.housing.base + (building.level - 1) * definition.housing.perLevel;
-      const assigned = building.garrison ?? {};
-      const used = Object.entries(assigned).reduce((sum, [type, count]) => sum + (UNITS[type]?.housing ?? 0) * count, 0);
-      const status = document.createElement('div');
-      status.className = 'context-status';
-      status.innerHTML = `<strong>Capacité ${used} / ${capacity}</strong><small>Troupes rassemblées autour du brasier</small>`;
-      body.append(status);
+    const summary = document.createElement('div');
+    summary.className = 'clan-summary';
+    summary.innerHTML = `<div><small>RÔLE</small><strong>${clan.role === 'leader' ? 'Chef' : 'Membre'}</strong></div><div><small>MEMBRES</small><strong>${clan.members?.length ?? 1}</strong></div><div><small>DONS</small><strong>${clan.donationsGiven ?? 0}</strong></div><div><small>REÇUS</small><strong>${clan.donationsReceived ?? 0}</strong></div>`;
+    body.append(summary);
 
-      const list = document.createElement('div');
-      list.className = 'camp-roster';
-      for (const [type, unit] of Object.entries(UNITS)) {
-        const row = document.createElement('div');
-        row.innerHTML = `<span>${type === 'skeleton' ? '☠' : type === 'ghoul' ? '♟' : '✦'}</span><strong>${unit.name}</strong><b>${assigned[type] ?? 0}</b>`;
-        list.append(row);
-      }
-      body.append(list);
+    const roster = document.createElement('div');
+    roster.className = 'clan-roster';
+    for (const [type, unit] of Object.entries(UNITS)) {
+      const campCount = state.buildings
+        .filter((item) => item.type === 'campfire')
+        .reduce((sum, camp) => sum + (camp.garrison?.[type] ?? 0), 0);
+      const row = document.createElement('div');
+      row.className = 'clan-roster-row';
+      row.innerHTML = `<span class="clan-unit-icon">${unitIcon(type)}</span><div><strong>${unit.name}</strong><small>Château : ${reinforcements[type] ?? 0} · Brasiers : ${campCount}</small></div>`;
+      const actions = document.createElement('div');
+      actions.className = 'clan-unit-actions';
+      const donate = document.createElement('button');
+      donate.textContent = 'Donner';
+      donate.disabled = campCount <= 0 || used + unit.housing > capacity;
+      donate.addEventListener('click', () => this.handlers.onDonateClanTroop(building.id, type));
+      const receive = document.createElement('button');
+      receive.textContent = 'Recevoir';
+      receive.disabled = used + unit.housing > capacity;
+      receive.addEventListener('click', () => this.handlers.onReceiveClanTroop(building.id, type));
+      actions.append(donate, receive);
+      row.append(actions);
+      roster.append(row);
     }
+    body.append(roster);
+
+    const leave = document.createElement('button');
+    leave.className = 'clan-leave-button';
+    leave.textContent = 'Quitter le clan';
+    leave.addEventListener('click', () => this.handlers.onLeaveClan());
+    body.append(leave);
   }
 
   renderBuildTabs() {
@@ -175,7 +245,7 @@ export class GameUI {
 
     for (const [type, definition] of entries) {
       const unlocked = isBuildingUnlocked(type, state);
-      const requiredLevel = Number(Object.entries({ 1: ['goldMine','lumberMill','essenceWell','barracks','campfire','wall'], 2: ['soulVault'], 3: ['runeTower','boneCatapult','cursedTrap'], 4: ['soulSpire','clanCastle'] }).find(([, types]) => types.includes(type))?.[0] ?? 1);
+      const requiredLevel = requiredTownHallLevel(type);
       const currentCount = state.buildings.filter((building) => building.type === type).length;
       const limit = definition.buildLimit?.[currentTownHall] ?? definition.buildLimit ?? Infinity;
       const maxed = currentCount >= limit;
@@ -220,9 +290,10 @@ export class GameUI {
     const minutes = Math.floor(battle.timeLeft / 60);
     const seconds = Math.ceil(battle.timeLeft % 60).toString().padStart(2,'0');
     this.$('battleTimer').textContent = `${minutes}:${seconds}`;
-    const totalHp = battle.buildings.reduce((sum, building) => sum + building.maxHp, 0);
-    const remainingHp = battle.buildings.reduce((sum, building) => sum + Math.max(0, building.hp), 0);
-    const destruction = Math.round((1 - remainingHp / totalHp) * 100);
+    const eligible = battle.buildings.filter((building) => !building.isTrap);
+    const totalHp = eligible.reduce((sum, building) => sum + building.maxHp, 0);
+    const remainingHp = eligible.reduce((sum, building) => sum + Math.max(0, building.hp), 0);
+    const destruction = totalHp > 0 ? Math.round((1 - remainingHp / totalHp) * 100) : 100;
     const throneDestroyed = battle.buildings.find((building) => building.id === 'enemy-throne')?.hp <= 0;
     const stars = destruction === 100 ? 3 : throneDestroyed ? 2 : destruction >= 50 ? 1 : 0;
     this.$('battleDestruction').textContent = `${destruction} %`;
@@ -261,7 +332,7 @@ export class GameUI {
     panel.classList.remove('hidden');
     this.$('selectionType').textContent = building.readyAt > Date.now() ? 'CONSTRUCTION' : definition.category?.toUpperCase() ?? 'BÂTIMENT';
     this.$('selectionName').textContent = definition.name;
-    const production = definition.production ? ` · ${Math.floor(building.stored ?? 0)} ${RESOURCE_LABELS[definition.production.resource]} en réserve` : '';
+    const production = definition.extractor ? ` · ${Math.floor(building.storedResource ?? 0)} ${RESOURCE_LABELS[definition.extractor.resource]} en réserve` : '';
     const limit = building.type === 'townHall' ? definition.maxLevel : allowedMax;
     this.$('selectionInfo').textContent = `Niveau ${building.level}/${limit}${production} · Amélioration ${cost.gold} or / ${cost.wood} bois`;
     this.$('selectionDescription').textContent = definition.description;
