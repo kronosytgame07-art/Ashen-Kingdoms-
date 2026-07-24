@@ -18,28 +18,27 @@
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark">♜</span>
-        <div><strong>Ashen Kingdoms</strong><small>Prototype du royaume</small></div>
+        <div><strong>Ashen Kingdoms</strong><small>Royaume des cendres</small></div>
       </div>
       <div class="resources" aria-label="Ressources">
-        <div class="resource gold"><span>●</span><b id="goldValue">0</b></div>
-        <div class="resource wood"><span>◆</span><b id="woodValue">0</b></div>
-        <div class="resource essence"><span>✦</span><b id="essenceValue">0</b></div>
+        <div class="resource gold" title="Or corrompu"><span>●</span><b id="goldValue">0</b></div>
+        <div class="resource wood" title="Bois noir"><span>◆</span><b id="woodValue">0</b></div>
+        <div class="resource essence" title="Âmes"><span>✦</span><b id="essenceValue">0</b></div>
       </div>
     </header>
 
     <main class="game-shell">
       <canvas id="gameCanvas" aria-label="Village Ashen Kingdoms"></canvas>
       <div class="vignette"></div>
-
       <section id="objectiveCard" class="objective-card">
         <span class="objective-icon">☠</span>
-        <div><small>OBJECTIF</small><strong id="objectiveText">Construisez une mine d’or</strong></div>
+        <div><small>OBJECTIF</small><strong id="objectiveText">Développez votre royaume maudit</strong></div>
       </section>
-
-      <section id="selectionPanel" class="selection-panel hidden">
+      <section id="selectionPanel" class="selection-panel hidden" aria-live="polite">
         <div>
           <small id="selectionType">BÂTIMENT</small>
           <h2 id="selectionName">Hôtel de Ville</h2>
+          <p id="selectionDescription" class="selection-description"></p>
           <p id="selectionInfo">Niveau 1</p>
         </div>
         <div class="selection-actions">
@@ -48,21 +47,19 @@
           <button id="removeButton" class="danger">Retirer</button>
         </div>
       </section>
-
       <button id="centerCamera" class="center-camera" aria-label="Recentrer la caméra">⌂</button>
-      <div id="gestureHint" class="gesture-hint">Pincez avec deux doigts pour zoomer</div>
+      <div class="gesture-hint show">Pincez avec deux doigts pour zoomer</div>
     </main>
 
     <nav class="buildbar" aria-label="Construction">
-      <button class="build-button" data-building="goldMine"><span class="build-icon">⛏</span><strong>Mine d’or</strong><small>120 bois</small></button>
-      <button class="build-button" data-building="lumberMill"><span class="build-icon">♣</span><strong>Scierie</strong><small>100 or</small></button>
-      <button class="build-button" data-building="essenceWell"><span class="build-icon">✦</span><strong>Puits</strong><small>160 or</small></button>
-      <button class="build-button" data-building="barracks"><span class="build-icon">⚔</span><strong>Caserne</strong><small>220 bois</small></button>
-      <button class="build-button" data-building="wall"><span class="build-icon">▥</span><strong>Rempart</strong><small>25 or / segment</small></button>
+      <button class="build-button" data-building="goldMine" title="Extrait de l’or corrompu"><span class="build-icon">⛏</span><strong>Mine d’or</strong><small>120 bois · 8 s</small></button>
+      <button class="build-button" data-building="lumberMill" title="Produit du bois noir"><span class="build-icon">♣</span><strong>Scierie</strong><small>100 or · 8 s</small></button>
+      <button class="build-button" data-building="essenceWell" title="Condense les âmes"><span class="build-icon">✦</span><strong>Puits d’âmes</strong><small>160 or · 10 s</small></button>
+      <button class="build-button" data-building="barracks" title="Prépare les futures troupes"><span class="build-icon">⚔</span><strong>Caserne</strong><small>220 bois · 12 s</small></button>
+      <button class="build-button" data-building="wall" title="Glissez pour poser plusieurs segments"><span class="build-icon">▥</span><strong>Rempart</strong><small>25 or / segment</small></button>
     </nav>
-
     <div id="toast" class="toast" role="status"></div>
   </div>
-  <script src="src/game.js"></script>
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>
