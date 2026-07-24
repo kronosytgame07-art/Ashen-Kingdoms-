@@ -79,6 +79,7 @@ export class Game {
   beginLongPressMove(building, pos) {
     this.clearLongPress();
     if (!building || building.type === 'townHall') return;
+    this.ui.closeContext();
     this.interaction.movingId = building.id;
     this.interaction.liftedId = building.id;
     this.interaction.selectedId = null;
@@ -137,6 +138,7 @@ export class Game {
         this.updatePreview(pos);
         if (this.interaction.placementType === 'wall' && this.drag.moved) this.placeWallPreview();
       } else if (this.drag.moved) {
+        this.ui.closeContext();
         this.state.camera.x = this.drag.camera.x + dx; this.state.camera.y = this.drag.camera.y + dy; this.dirty = true;
       }
     });
@@ -159,14 +161,14 @@ export class Game {
     this.ui.bind({
       onBuild: (type) => {
         if (!isBuildingUnlocked(type, this.state)) return this.ui.toast('Améliorez le Trône corrompu pour débloquer ce bâtiment', 'error');
+        this.ui.closeContext();
         this.interaction.placementType=type; this.interaction.movingId=null; this.interaction.selectedId=null;
         this.ui.toast(`Placez : ${BUILDINGS[type].name}`);
       },
       onTrain: (type) => this.trainUnit(type),
-      onMove: () => {},
       onUpgrade: () => this.upgradeSelected(),
       onRemove: () => this.removeSelected(),
-      onCenter: () => { this.state.camera={x:0,y:-20,zoom:1}; this.dirty=true; },
+      onCenter: () => { this.ui.closeContext(); this.state.camera={x:0,y:-20,zoom:1}; this.dirty=true; },
       onAttack: () => this.startBattle(),
       onSelectBattleUnit: (type) => { if (this.battle.selectUnit(type)) { this.ui.updateBattle(this.battle.state); this.dirty = true; } },
       onEndBattle: () => this.finishBattle(),
@@ -254,19 +256,25 @@ export class Game {
       return;
     }
     const building = this.grid.buildingAt(cell.col,cell.row,BUILDINGS,this.state.buildings);
-    if (building && BUILDINGS[building.type]?.extractor && building.readyAt <= Date.now()) {
+    if (!building) {
+      this.interaction.selectedId = null;
+      this.ui.closeContext();
+      this.dirty = true;
+      return;
+    }
+    if (BUILDINGS[building.type]?.extractor && building.readyAt <= Date.now()) {
       const result = this.economy.collectExtractor(this.state, building);
       if (result.ok) {
         this.interaction.collectionPopups.push({ buildingId: building.id, amount: result.amount, resource: result.resource, createdAt: performance.now() });
         this.ui.toast(`+${result.amount} ${BUILDINGS[building.type].name}`, 'success');
         globalThis.navigator?.vibrate?.(18);
         this.save();
-      } else {
-        this.interaction.selectedId = building.id;
+        this.dirty = true;
+        return;
       }
-    } else {
-      this.interaction.selectedId = building?.id || null;
     }
+    this.interaction.selectedId = building.id;
+    if (!this.ui.openContext(this.state, building)) this.ui.closeContext();
     this.dirty=true;
   }
 
@@ -287,6 +295,7 @@ export class Game {
       if(!this.economy.spend(this.state, definition.cost)) return this.ui.toast('Ressources insuffisantes','error');
       const building={id:makeId(),type,col:cell.col,row:cell.row,level:1,readyAt:Date.now()+definition.buildTime*1000};
       if (definition.extractor) { building.storedResource = 0; building.lastProductionAt = Date.now(); }
+      if (definition.panel === 'campfire') building.garrison = { skeleton: 0, ghoul: 0, necromancer: 0 };
       this.state.buildings.push(building); this.interaction.selectedId=building.id;
       if(!(type==='wall'&&keepWallMode)) this.interaction.placementType=null;
       this.ui.toast(`${definition.name} placé`,'success');
@@ -317,6 +326,7 @@ export class Game {
     const building=this.state.buildings.find((item)=>item.id===this.interaction.selectedId); if(!building||building.type==='townHall')return;
     Object.entries(BUILDINGS[building.type].cost).forEach(([resource,amount])=>this.state.resources[resource]+=Math.floor(amount*.5));
     this.state.buildings=this.state.buildings.filter((item)=>item.id!==building.id); this.interaction.selectedId=null;
+    this.ui.closeContext();
     this.ui.toast('Bâtiment retiré'); this.save(); this.dirty=true;
   }
 
