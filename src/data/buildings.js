@@ -9,7 +9,7 @@ export const BUILDINGS = {
     colors: ['#29222f', '#18151d', '#a66cff'],
     sprite: 'IMG_3440.png',
     spriteSheet: { columns: 4, rows: 2, frames: 8, fps: 1.6, removeBackground: true, backgroundTolerance: 32 },
-    spriteRender: { maxTilesWide: 5, scale: 0.92, anchorY: 0.91, offsetX: 0, offsetY: 0 },
+    spriteRender: { maxTilesWide: 5, renderScale: 0.92, anchorY: 0.91, offsetX: 0, offsetY: 0 },
     category: 'core'
   },
   goldMine: {
