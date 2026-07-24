@@ -12,16 +12,61 @@ export class GameUI {
   bind(handlers) {
     document.querySelectorAll('.build-button').forEach((button) => button.addEventListener('click', () => handlers.onBuild(button.dataset.building)));
     document.querySelectorAll('.unit-button').forEach((button) => button.addEventListener('click', () => handlers.onTrain(button.dataset.unit)));
+    document.querySelectorAll('.deploy-unit').forEach((button) => button.addEventListener('click', () => handlers.onSelectBattleUnit(button.dataset.unit)));
     this.$('moveButton').addEventListener('click', handlers.onMove);
     this.$('upgradeButton').addEventListener('click', handlers.onUpgrade);
     this.$('removeButton').addEventListener('click', handlers.onRemove);
     this.$('centerCamera').addEventListener('click', handlers.onCenter);
+    this.$('attackButton').addEventListener('click', handlers.onAttack);
+    this.$('endBattleButton').addEventListener('click', handlers.onEndBattle);
+    this.$('returnVillageButton').addEventListener('click', handlers.onReturnVillage);
   }
 
   toast(message, kind = 'info') {
     const toast = this.$('toast');
     toast.textContent = message; toast.dataset.kind = kind; toast.classList.add('show');
     clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+  }
+
+  setBattleMode(active) {
+    this.$('battleHud').classList.toggle('hidden', !active);
+    this.$('deploymentBar').classList.toggle('hidden', !active);
+    this.$('trainingPanel').classList.toggle('hidden', active);
+    document.querySelector('.buildbar').classList.toggle('hidden', active);
+    this.$('objectiveCard').classList.toggle('hidden', active);
+    this.$('selectionPanel').classList.add('hidden');
+    this.$('centerCamera').classList.toggle('hidden', active);
+    this.$('attackButton').classList.toggle('hidden', active);
+  }
+
+  showBattleResult(result) {
+    this.$('battleResult').classList.remove('hidden');
+    this.$('resultStars').textContent = `${'★'.repeat(result.stars)}${'☆'.repeat(3-result.stars)}`;
+    this.$('resultDestruction').textContent = `${result.destruction} % détruit`;
+    this.$('resultLoot').textContent = `Butin : ${result.loot.gold} or · ${result.loot.wood} bois · ${result.loot.essence} âmes`;
+  }
+
+  hideBattleResult() { this.$('battleResult').classList.add('hidden'); }
+
+  updateBattle(battle) {
+    if (!battle) return;
+    const minutes = Math.floor(battle.timeLeft / 60);
+    const seconds = Math.ceil(battle.timeLeft % 60).toString().padStart(2,'0');
+    this.$('battleTimer').textContent = `${minutes}:${seconds}`;
+    const totalHp = battle.buildings.reduce((sum, building) => sum + building.maxHp, 0);
+    const remainingHp = battle.buildings.reduce((sum, building) => sum + Math.max(0, building.hp), 0);
+    const destruction = Math.round((1 - remainingHp / totalHp) * 100);
+    const throneDestroyed = battle.buildings.find((building) => building.id === 'enemy-throne')?.hp <= 0;
+    const stars = destruction === 100 ? 3 : throneDestroyed ? 2 : destruction >= 50 ? 1 : 0;
+    this.$('battleDestruction').textContent = `${destruction} %`;
+    this.$('battleStars').textContent = `${'★'.repeat(stars)}${'☆'.repeat(3-stars)}`;
+    const ids = { skeleton:'deploySkeleton', ghoul:'deployGhoul', necromancer:'deployNecromancer' };
+    document.querySelectorAll('.deploy-unit').forEach((button) => {
+      const type = button.dataset.unit;
+      this.$(ids[type]).textContent = battle.available[type] ?? 0;
+      button.classList.toggle('active', battle.selectedUnit === type);
+      button.disabled = (battle.available[type] ?? 0) <= 0;
+    });
   }
 
   updateTraining(state) {
@@ -67,9 +112,7 @@ export class GameUI {
 
     this.updateTraining(state);
 
-    if (this.$('objectiveText')) {
-      this.$('objectiveText').textContent = currentQuest?.text ?? `Trône corrompu niveau ${townHallLevel(state)} · Développez librement votre royaume`;
-    }
+    if (this.$('objectiveText')) this.$('objectiveText').textContent = currentQuest?.text ?? `Trône corrompu niveau ${townHallLevel(state)} · Développez librement votre royaume`;
 
     const building = state.buildings.find((item) => item.id === selectedId);
     const panel = this.$('selectionPanel');
