@@ -324,9 +324,23 @@ export class Renderer {
     const sprite = this.assets.get(building.type);
     if (sprite) {
       const frame = this.getSpriteFrame(building.type, sprite, definition.spriteSheet, time);
-      const targetW = this.grid.tileWidth * definition.size.w * 1.48 * scale;
+      const spriteSettings = definition.spriteRender ?? {};
+      const footprintWidth = this.grid.tileWidth * (spriteSettings.maxTilesWide ?? definition.size.w) * scale;
+      const targetW = Math.min(
+        this.grid.tileWidth * definition.size.w * 1.48 * scale,
+        footprintWidth
+      ) * (spriteSettings.renderScale ?? 1);
       const targetH = targetW * (frame.height / frame.width);
-      c.drawImage(frame, -targetW / 2, -targetH + 22 * scale, targetW, targetH);
+      const offsetX = (spriteSettings.offsetX ?? 0) * scale;
+      const offsetY = (spriteSettings.offsetY ?? 0) * scale;
+      const anchorY = Math.max(0, Math.min(1, spriteSettings.anchorY ?? 1));
+      c.drawImage(
+        frame,
+        -targetW / 2 + offsetX,
+        -targetH * anchorY + offsetY,
+        targetW,
+        targetH
+      );
     } else if (building.type === 'wall') {
       c.fillStyle = definition.colors[0];
       c.fillRect(-width / 2, -height, width, height);
