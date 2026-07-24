@@ -16,42 +16,25 @@
 
   <div id="app">
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark">♜</span>
-        <div><strong>Ashen Kingdoms</strong><small>Royaume des cendres</small></div>
-      </div>
+      <div class="brand"><span class="brand-mark">♜</span><div><strong>Ashen Kingdoms</strong><small>Royaume des cendres</small></div></div>
       <div class="resources" aria-label="Ressources">
         <div class="resource gold" title="Or corrompu"><span>●</span><b id="goldValue">0</b></div>
         <div class="resource wood" title="Bois noir"><span>◆</span><b id="woodValue">0</b></div>
         <div class="resource essence" title="Âmes"><span>✦</span><b id="essenceValue">0</b></div>
       </div>
+      <button id="attackButton" class="attack-button">⚔ Attaquer</button>
     </header>
 
     <main class="game-shell">
       <canvas id="gameCanvas" aria-label="Village Ashen Kingdoms"></canvas>
       <div class="vignette"></div>
-      <section id="objectiveCard" class="objective-card">
-        <span class="objective-icon">☠</span>
-        <div><small>OBJECTIF</small><strong id="objectiveText">Développez votre royaume maudit</strong></div>
-      </section>
+      <section id="objectiveCard" class="objective-card"><span class="objective-icon">☠</span><div><small>OBJECTIF</small><strong id="objectiveText">Développez votre royaume maudit</strong></div></section>
       <section id="selectionPanel" class="selection-panel hidden" aria-live="polite">
-        <div>
-          <small id="selectionType">BÂTIMENT</small>
-          <h2 id="selectionName">Trône corrompu</h2>
-          <p id="selectionDescription" class="selection-description"></p>
-          <p id="selectionInfo">Niveau 1</p>
-        </div>
-        <div class="selection-actions">
-          <button id="moveButton" class="secondary">Déplacer</button>
-          <button id="upgradeButton">Améliorer</button>
-          <button id="removeButton" class="danger">Retirer</button>
-        </div>
+        <div><small id="selectionType">BÂTIMENT</small><h2 id="selectionName">Trône corrompu</h2><p id="selectionDescription" class="selection-description"></p><p id="selectionInfo">Niveau 1</p></div>
+        <div class="selection-actions"><button id="moveButton" class="secondary">Déplacer</button><button id="upgradeButton">Améliorer</button><button id="removeButton" class="danger">Retirer</button></div>
       </section>
       <section id="trainingPanel" class="training-panel">
-        <div class="training-header">
-          <div><small>ARMÉE</small><strong id="armyCapacity">0 / 0</strong></div>
-          <div id="trainingQueue" class="training-queue">File vide</div>
-        </div>
+        <div class="training-header"><div><small>ARMÉE</small><strong id="armyCapacity">0 / 0</strong></div><div id="trainingQueue" class="training-queue">File vide</div></div>
         <div class="unit-buttons">
           <button class="unit-button" data-unit="skeleton"><span>☠</span><strong>Squelette</strong><small>20 âmes · 6 s</small></button>
           <button class="unit-button" data-unit="ghoul"><span>♟</span><strong>Goule</strong><small>45 âmes · 12 s</small></button>
@@ -60,6 +43,21 @@
       </section>
       <button id="centerCamera" class="center-camera" aria-label="Recentrer la caméra">⌂</button>
       <div class="gesture-hint show">Pincez avec deux doigts pour zoomer</div>
+
+      <section id="battleHud" class="battle-hud hidden">
+        <div><small>RAID</small><strong id="battleTimer">1:30</strong></div>
+        <div><small>DESTRUCTION</small><strong id="battleDestruction">0 %</strong></div>
+        <div><small>ÉTOILES</small><strong id="battleStars">☆☆☆</strong></div>
+        <button id="endBattleButton">Terminer</button>
+      </section>
+      <section id="deploymentBar" class="deployment-bar hidden">
+        <button class="deploy-unit" data-unit="skeleton">☠ <strong id="deploySkeleton">0</strong></button>
+        <button class="deploy-unit" data-unit="ghoul">♟ <strong id="deployGhoul">0</strong></button>
+        <button class="deploy-unit" data-unit="necromancer">✦ <strong id="deployNecromancer">0</strong></button>
+      </section>
+      <section id="battleResult" class="battle-result hidden">
+        <small>RÉSULTAT DU RAID</small><h2 id="resultStars">☆☆☆</h2><p id="resultDestruction">0 % détruit</p><p id="resultLoot">Aucun butin</p><button id="returnVillageButton">Retour au village</button>
+      </section>
     </main>
 
     <nav class="buildbar" aria-label="Construction">
