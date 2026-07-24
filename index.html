@@ -65,7 +65,18 @@
         <div id="contextBody" class="context-body"></div>
       </section>
 
+      <div id="buildMenuBackdrop" class="context-backdrop hidden"></div>
+      <section id="buildMenu" class="build-menu hidden" role="dialog" aria-modal="true" aria-labelledby="buildMenuTitle">
+        <header class="build-menu-header">
+          <div><small>CONSTRUCTION</small><h2 id="buildMenuTitle">Bâtir le royaume</h2></div>
+          <button id="closeBuildMenuButton" class="context-close" aria-label="Fermer">×</button>
+        </header>
+        <nav id="buildCategoryTabs" class="build-category-tabs" aria-label="Catégories de construction"></nav>
+        <div id="buildMenuList" class="build-menu-list"></div>
+      </section>
+
       <button id="centerCamera" class="center-camera" aria-label="Recentrer la caméra">⌂</button>
+      <button id="openBuildMenuButton" class="open-build-menu-button">⚒ Construire</button>
       <div class="gesture-hint show">Pincez avec deux doigts pour zoomer</div>
 
       <section id="battleHud" class="battle-hud hidden">
@@ -84,19 +95,6 @@
       </section>
     </main>
 
-    <nav class="buildbar" aria-label="Construction">
-      <button class="build-button" data-building="goldMine"><span class="build-icon">⛏</span><strong>Mine d’or</strong><small>120 bois · 8 s</small></button>
-      <button class="build-button" data-building="lumberMill"><span class="build-icon">♣</span><strong>Scierie</strong><small>100 or · 8 s</small></button>
-      <button class="build-button" data-building="essenceWell"><span class="build-icon">✦</span><strong>Puits d’âmes</strong><small>160 or · 10 s</small></button>
-      <button class="build-button" data-building="barracks"><span class="build-icon">⚔</span><strong>Caserne</strong><small>220 bois · 12 s</small></button>
-      <button class="build-button" data-building="campfire"><span class="build-icon">♨</span><strong>Brasier</strong><small>180 or · 140 bois</small></button>
-      <button class="build-button" data-building="soulVault"><span class="build-icon">▣</span><strong>Caveau</strong><small>Trône niv. 2</small></button>
-      <button class="build-button" data-building="runeTower"><span class="build-icon">♝</span><strong>Tour runique</strong><small>Trône niv. 3</small></button>
-      <button class="build-button" data-building="boneCatapult"><span class="build-icon">◉</span><strong>Catapulte</strong><small>Dégâts de zone</small></button>
-      <button class="build-button" data-building="soulSpire"><span class="build-icon">▲</span><strong>Flèche</strong><small>Anti-aérien</small></button>
-      <button class="build-button" data-building="cursedTrap"><span class="build-icon">✹</span><strong>Piège</strong><small>Caché</small></button>
-      <button class="build-button" data-building="wall"><span class="build-icon">▥</span><strong>Rempart</strong><small>25 or / segment</small></button>
-    </nav>
     <div id="toast" class="toast" role="status"></div>
   </div>
   <script type="module" src="src/main.js"></script>
