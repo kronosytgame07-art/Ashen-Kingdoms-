@@ -11,19 +11,25 @@ export const BUILDINGS = {
   goldMine: {
     name: 'Mine d’or corrompu', description: 'Extrait de l’or souillé des profondeurs.',
     size: { w: 2, h: 2 }, cost: { wood: 120 }, buildTime: 8, maxLevel: 5,
-    production: { resource: 'gold', perSecond: 2.2, localCapacity: 180, collectThreshold: 12 }, storage: null,
+    production: null,
+    extractor: { resource: 'gold', perSecond: 2.2, capacity: 180, collectThreshold: 12 },
+    storage: null,
     colors: ['#41362d', '#211b18', '#e7bb55'], sprite: null, category: 'resource'
   },
   lumberMill: {
     name: 'Scierie maudite', description: 'Transforme les arbres morts en bois noir.',
     size: { w: 2, h: 2 }, cost: { gold: 100 }, buildTime: 8, maxLevel: 5,
-    production: { resource: 'wood', perSecond: 2.2, localCapacity: 180, collectThreshold: 12 }, storage: null,
+    production: null,
+    extractor: { resource: 'wood', perSecond: 2.2, capacity: 180, collectThreshold: 12 },
+    storage: null,
     colors: ['#3b2c24', '#251b18', '#bc8a50'], sprite: null, category: 'resource'
   },
   essenceWell: {
     name: 'Puits d’âmes', description: 'Condense les murmures des défunts.',
     size: { w: 2, h: 2 }, cost: { gold: 160 }, buildTime: 10, maxLevel: 5,
-    production: { resource: 'essence', perSecond: 0.45, localCapacity: 70, collectThreshold: 5 }, storage: null,
+    production: null,
+    extractor: { resource: 'essence', perSecond: 0.45, capacity: 70, collectThreshold: 5 },
+    storage: null,
     colors: ['#25202c', '#17131c', '#b982ff'], sprite: null, category: 'resource'
   },
   soulVault: {
