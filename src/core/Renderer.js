@@ -34,21 +34,63 @@ export class Renderer {
     }
   }
 
+  buildingAnchor(building, state) {
+    const d=this.definitions[building.type], camera=state.camera, scale=camera.zoom;
+    const p=this.grid.gridToScreen(building.col+d.size.w/2,building.row+d.size.h/2,camera,this.viewport());
+    const baseY=p.y+this.grid.tileHeight*d.size.h*.48*scale;
+    return { x:p.x, y:baseY, scale, definition:d };
+  }
+
+  drawCollectionBubble(building, state, time) {
+    const d=this.definitions[building.type];
+    if (!d?.extractor || building.readyAt > Date.now()) return;
+    const stored=building.storedResource ?? 0;
+    const threshold=d.extractor.collectThreshold ?? 1;
+    if (stored < threshold) return;
+    const capacity=d.extractor.capacity*(1+(building.level-1)*.5);
+    const full=stored >= capacity*.98;
+    const {x,y,scale}=this.buildingAnchor(building,state);
+    const c=this.ctx;
+    const bob=Math.sin(time/260+building.col)*4*scale;
+    c.save(); c.translate(x,y-92*scale+bob);
+    c.shadowColor=full?'#ff6878':d.colors[2]; c.shadowBlur=(full?18:11)*scale;
+    c.fillStyle=full?'rgba(85,20,30,.96)':'rgba(18,13,25,.96)';
+    c.strokeStyle=full?'#ff6878':d.colors[2]; c.lineWidth=Math.max(1.5,2*scale);
+    c.beginPath(); c.arc(0,0,18*scale,0,Math.PI*2); c.fill(); c.stroke();
+    c.shadowBlur=0; c.fillStyle=d.colors[2]; c.textAlign='center'; c.textBaseline='middle'; c.font=`800 ${Math.max(12,15*scale)}px sans-serif`;
+    const icon=d.extractor.resource==='gold'?'●':d.extractor.resource==='wood'?'◆':'✦';
+    c.fillText(icon,0,-1*scale);
+    c.fillStyle='#fff'; c.font=`800 ${Math.max(8,9*scale)}px sans-serif`; c.fillText(full?'!':Math.floor(stored),0,22*scale);
+    c.restore();
+  }
+
+  drawCollectionPopups(interaction,state,time) {
+    const c=this.ctx;
+    for(const popup of interaction.collectionPopups ?? []){
+      const building=state.buildings.find((item)=>item.id===popup.buildingId); if(!building) continue;
+      const age=Math.max(0,time-popup.createdAt), progress=Math.min(1,age/1200);
+      const {x,y,scale}=this.buildingAnchor(building,state);
+      c.save(); c.globalAlpha=1-progress; c.translate(x,y-70*scale-progress*42*scale);
+      c.fillStyle=popup.resource==='gold'?'#f0c45e':popup.resource==='wood'?'#c08b54':'#c48cff';
+      c.shadowColor=c.fillStyle; c.shadowBlur=12*scale; c.textAlign='center'; c.font=`900 ${Math.max(14,18*scale)}px sans-serif`; c.fillText(`+${popup.amount}`,0,0); c.restore();
+    }
+  }
+
   building(building, state, selected, time, lifted = false) {
     const d=this.definitions[building.type], camera=state.camera, scale=camera.zoom;
-    this.footprint(building,camera,selected || lifted);
+    this.footprint(building,camera,selected);
     const p=this.grid.gridToScreen(building.col+d.size.w/2,building.row+d.size.h/2,camera,this.viewport());
-    const liftY = lifted ? -12 * scale : 0;
-    const liftScale = lifted ? 1.06 : 1;
-    const baseY=p.y+this.grid.tileHeight*d.size.h*.48*scale+liftY, width=this.grid.tileWidth*d.size.w*.62*scale, height=(building.type==='wall'?28:58+d.size.h*9)*scale, c=this.ctx;
-    c.save(); c.translate(p.x,baseY); c.scale(liftScale,liftScale); c.globalAlpha=building.readyAt>Date.now()?.65:1;
-    c.beginPath(); c.ellipse(0,lifted?14*scale:5*scale,width*(lifted?.7:.56),lifted?19*scale:13*scale,0,0,Math.PI*2); c.fillStyle=lifted?'rgba(0,0,0,.62)':'rgba(0,0,0,.45)'; c.fill();
+    const baseY=p.y+this.grid.tileHeight*d.size.h*.48*scale, width=this.grid.tileWidth*d.size.w*.62*scale, height=(building.type==='wall'?28:58+d.size.h*9)*scale, c=this.ctx;
+    c.save(); c.translate(p.x,baseY-(lifted?10*scale:0)); if(lifted)c.scale(1.05,1.05); c.globalAlpha=building.readyAt>Date.now()?.65:1;
+    c.beginPath(); c.ellipse(0,5*scale,width*(lifted?.64:.56),lifted?18*scale:13*scale,0,0,Math.PI*2); c.fillStyle=lifted?'rgba(0,0,0,.62)':'rgba(0,0,0,.45)'; c.fill();
     const sprite=this.assets.get(building.type);
     if(sprite){ const targetW=this.grid.tileWidth*d.size.w*1.35*scale, targetH=targetW*(sprite.height/sprite.width); c.drawImage(sprite,-targetW/2,-targetH+18*scale,targetW,targetH); }
     else if(building.type==='wall'){ c.fillStyle=d.colors[0]; c.fillRect(-width/2,-height,width,height); c.fillStyle='#756b7c'; for(let i=-2;i<=2;i+=1){c.beginPath();c.moveTo(i*width/5,-height);c.lineTo(i*width/5+width/10,-height-12*scale);c.lineTo(i*width/5+width/5,-height);c.fill();} }
     else { const top=-height*.65; c.fillStyle=d.colors[0]; c.fillRect(-width/2,top,width,height*.65); this.polygon([{x:-width*.58,y:top},{x:0,y:-height},{x:width*.58,y:top}],d.colors[1],'#0d0b0f',2*scale); c.shadowColor=d.colors[2]; c.shadowBlur=(8+Math.sin(time/550)*3)*scale; c.fillStyle=d.colors[2]; c.fillRect(-width*.06,-height*.28,width*.12,height*.11); c.shadowBlur=0; }
+    if(lifted){ c.strokeStyle='#d7b0ff'; c.lineWidth=2*scale; c.strokeRect(-width*.55,-height*1.08,width*1.1,height*1.14); }
     if(building.readyAt>Date.now()){ c.fillStyle='rgba(9,7,12,.9)'; c.fillRect(-38*scale,-height-28*scale,76*scale,21*scale); c.fillStyle='#dfc4ff'; c.textAlign='center'; c.font=`700 ${Math.max(10,11*scale)}px sans-serif`; c.fillText(`${Math.ceil((building.readyAt-Date.now())/1000)}s`,0,-height-13*scale); }
     c.restore();
+    this.drawCollectionBubble(building,state,time);
   }
 
   battleGround(time) {
@@ -102,5 +144,6 @@ export class Renderer {
     this.ground(state.camera,time);
     if(interaction.preview){ this.footprint(interaction.preview,state.camera,false,interaction.preview.valid); }
     [...state.buildings].sort((a,b)=>(a.col+a.row)-(b.col+b.row)).forEach((b)=>this.building(b,state,b.id===interaction.selectedId,time,b.id===interaction.liftedId));
+    this.drawCollectionPopups(interaction,state,time);
   }
 }
