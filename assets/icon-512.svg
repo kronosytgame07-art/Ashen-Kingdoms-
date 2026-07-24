@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="100" fill="#120f18"/>
+  <polygon points="256,48 304,192 452,192 332,282 380,426 256,336 132,426 180,282 60,192 208,192" fill="#7a3fcf" opacity="0.22"/>
+  <text x="256" y="356" font-family="serif" font-size="288" font-weight="900" text-anchor="middle" fill="#b87cff">♜</text>
+  <rect x="80" y="430" width="352" height="8" rx="4" fill="#6a3aac" opacity="0.6"/>
+  <text x="256" y="490" font-family="serif" font-size="36" font-weight="700" text-anchor="middle" fill="#9b6de8" letter-spacing="4">ASHEN</text>
+</svg>
