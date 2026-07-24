@@ -12,6 +12,8 @@ import { GameUI } from '../ui/GameUI.js';
 
 const makeId = () => globalThis.crypto?.randomUUID?.() || `b-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const LONG_PRESS_MS = 500;
+const MOVE_TOLERANCE = 10;
 
 export class Game {
   constructor(canvas) {
@@ -38,10 +40,11 @@ export class Game {
       savedAt: Date.now()
     }));
     this.training.ensureState(this.state);
-    this.interaction = { selectedId: null, placementType: null, movingId: null, preview: null };
+    this.interaction = { selectedId: null, placementType: null, movingId: null, preview: null, liftedId: null };
     this.pointers = new Map();
     this.drag = null;
     this.pinch = null;
+    this.longPressTimer = null;
     this.lastFrame = performance.now();
     this.lastUiUpdate = 0;
     this.dirty = true;
@@ -68,6 +71,25 @@ export class Game {
     else if (result.elapsedSeconds > 30 && total >= 1) this.ui.toast('Production hors ligne récupérée', 'success');
   }
 
+  clearLongPress() {
+    if (this.longPressTimer) clearTimeout(this.longPressTimer);
+    this.longPressTimer = null;
+  }
+
+  beginLongPressMove(building, pos) {
+    this.clearLongPress();
+    if (!building || building.type === 'townHall') return;
+    this.interaction.movingId = building.id;
+    this.interaction.liftedId = building.id;
+    this.interaction.selectedId = null;
+    this.drag.longPressTriggered = true;
+    this.drag.original = { col: building.col, row: building.row };
+    this.updatePreview(pos);
+    globalThis.navigator?.vibrate?.(35);
+    this.ui.toast('Déplacez le bâtiment puis relâchez', 'success');
+    this.dirty = true;
+  }
+
   bindEvents() {
     const position = (event) => { const r = this.canvas.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; };
     this.canvas.addEventListener('pointerdown', (event) => {
@@ -78,11 +100,17 @@ export class Game {
         return;
       }
       if (this.pointers.size === 2) {
+        this.clearLongPress();
         const [a,b] = [...this.pointers.values()];
         this.pinch = { distance: Math.hypot(a.x-b.x,a.y-b.y), zoom: this.state.camera.zoom, center: { x:(a.x+b.x)/2, y:(a.y+b.y)/2 }, camera: { ...this.state.camera } };
         this.drag = null; return;
       }
-      this.drag = { start: pos, camera: { ...this.state.camera }, moved: false, wallCells: new Set() };
+      const cell = this.grid.screenToGrid(pos.x, pos.y, this.state.camera, this.renderer.viewport());
+      const pressedBuilding = this.grid.buildingAt(cell.col, cell.row, BUILDINGS, this.state.buildings);
+      this.drag = { start: pos, camera: { ...this.state.camera }, moved: false, wallCells: new Set(), pressedBuildingId: pressedBuilding?.id ?? null, longPressTriggered: false };
+      if (!this.interaction.placementType && !this.interaction.movingId && pressedBuilding) {
+        this.longPressTimer = setTimeout(() => this.beginLongPressMove(pressedBuilding, pos), LONG_PRESS_MS);
+      }
       this.updatePreview(pos);
     });
 
@@ -91,6 +119,7 @@ export class Game {
       if (!this.pointers.has(event.pointerId)) return;
       const pos = position(event); this.pointers.set(event.pointerId, pos);
       if (this.pointers.size === 2 && this.pinch) {
+        this.clearLongPress();
         const [a,b] = [...this.pointers.values()];
         const center = { x:(a.x+b.x)/2, y:(a.y+b.y)/2 };
         const zoom = clamp(this.pinch.zoom * Math.hypot(a.x-b.x,a.y-b.y) / this.pinch.distance, .55, 1.65);
@@ -101,7 +130,9 @@ export class Game {
       }
       if (!this.drag) return;
       const dx = pos.x-this.drag.start.x, dy = pos.y-this.drag.start.y;
-      this.drag.moved ||= Math.hypot(dx,dy) > 7;
+      const distance = Math.hypot(dx,dy);
+      if (distance > MOVE_TOLERANCE && !this.drag.longPressTriggered) this.clearLongPress();
+      this.drag.moved ||= distance > 7;
       if (this.interaction.placementType || this.interaction.movingId) {
         this.updatePreview(pos);
         if (this.interaction.placementType === 'wall' && this.drag.moved) this.placeWallPreview();
@@ -113,8 +144,10 @@ export class Game {
     const endPointer = (event) => {
       const pos = position(event); this.pointers.delete(event.pointerId);
       if (this.battle.state?.active) return;
+      this.clearLongPress();
       if (this.pointers.size < 2) this.pinch = null;
-      if (this.drag && !this.drag.moved) this.handleTap(pos);
+      if (this.drag?.longPressTriggered && this.interaction.movingId) this.finishLongPressMove(pos);
+      else if (this.drag && !this.drag.moved) this.handleTap(pos);
       this.drag = null; this.save();
     };
     this.canvas.addEventListener('pointerup', endPointer);
@@ -130,7 +163,7 @@ export class Game {
         this.ui.toast(`Placez : ${BUILDINGS[type].name}`);
       },
       onTrain: (type) => this.trainUnit(type),
-      onMove: () => { if(!this.interaction.selectedId)return; this.interaction.movingId=this.interaction.selectedId; this.interaction.selectedId=null; this.ui.toast('Choisissez le nouvel emplacement'); },
+      onMove: () => {},
       onUpgrade: () => this.upgradeSelected(),
       onRemove: () => this.removeSelected(),
       onCenter: () => { this.state.camera={x:0,y:-20,zoom:1}; this.dirty=true; },
@@ -139,6 +172,27 @@ export class Game {
       onEndBattle: () => this.finishBattle(),
       onReturnVillage: () => this.returnToVillage()
     });
+  }
+
+  finishLongPressMove(pos) {
+    const building = this.state.buildings.find((item) => item.id === this.interaction.movingId);
+    if (!building || !this.drag?.original) return;
+    const cell = this.grid.screenToGrid(pos.x,pos.y,this.state.camera,this.renderer.viewport());
+    const valid = this.grid.canPlace(building.type,cell.col,cell.row,BUILDINGS,this.state.buildings,building.id);
+    if (valid) {
+      building.col = cell.col;
+      building.row = cell.row;
+      this.ui.toast('Bâtiment déplacé', 'success');
+    } else {
+      building.col = this.drag.original.col;
+      building.row = this.drag.original.row;
+      this.ui.toast('Emplacement invalide — bâtiment replacé', 'error');
+    }
+    this.interaction.movingId = null;
+    this.interaction.liftedId = null;
+    this.interaction.preview = null;
+    this.interaction.selectedId = building.id;
+    this.dirty = true;
   }
 
   startBattle() {
@@ -210,7 +264,7 @@ export class Game {
     if(!type || !this.grid.canPlace(type,cell.col,cell.row,BUILDINGS,this.state.buildings,this.interaction.movingId)) return this.ui.toast('Emplacement impossible','error');
     if(this.interaction.movingId){
       const building=this.state.buildings.find((item)=>item.id===this.interaction.movingId);
-      building.col=cell.col; building.row=cell.row; this.interaction.movingId=null; this.interaction.selectedId=building.id;
+      building.col=cell.col; building.row=cell.row; this.interaction.movingId=null; this.interaction.liftedId=null; this.interaction.selectedId=building.id;
     } else {
       if (!isBuildingUnlocked(type, this.state)) return this.ui.toast('Bâtiment verrouillé', 'error');
       const definition=BUILDINGS[type];
