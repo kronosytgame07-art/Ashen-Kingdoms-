@@ -34,13 +34,15 @@ export class Renderer {
     }
   }
 
-  building(building, state, selected, time) {
+  building(building, state, selected, time, lifted = false) {
     const d=this.definitions[building.type], camera=state.camera, scale=camera.zoom;
-    this.footprint(building,camera,selected);
+    this.footprint(building,camera,selected || lifted);
     const p=this.grid.gridToScreen(building.col+d.size.w/2,building.row+d.size.h/2,camera,this.viewport());
-    const baseY=p.y+this.grid.tileHeight*d.size.h*.48*scale, width=this.grid.tileWidth*d.size.w*.62*scale, height=(building.type==='wall'?28:58+d.size.h*9)*scale, c=this.ctx;
-    c.save(); c.translate(p.x,baseY); c.globalAlpha=building.readyAt>Date.now()?.65:1;
-    c.beginPath(); c.ellipse(0,5*scale,width*.56,13*scale,0,0,Math.PI*2); c.fillStyle='rgba(0,0,0,.45)'; c.fill();
+    const liftY = lifted ? -12 * scale : 0;
+    const liftScale = lifted ? 1.06 : 1;
+    const baseY=p.y+this.grid.tileHeight*d.size.h*.48*scale+liftY, width=this.grid.tileWidth*d.size.w*.62*scale, height=(building.type==='wall'?28:58+d.size.h*9)*scale, c=this.ctx;
+    c.save(); c.translate(p.x,baseY); c.scale(liftScale,liftScale); c.globalAlpha=building.readyAt>Date.now()?.65:1;
+    c.beginPath(); c.ellipse(0,lifted?14*scale:5*scale,width*(lifted?.7:.56),lifted?19*scale:13*scale,0,0,Math.PI*2); c.fillStyle=lifted?'rgba(0,0,0,.62)':'rgba(0,0,0,.45)'; c.fill();
     const sprite=this.assets.get(building.type);
     if(sprite){ const targetW=this.grid.tileWidth*d.size.w*1.35*scale, targetH=targetW*(sprite.height/sprite.width); c.drawImage(sprite,-targetW/2,-targetH+18*scale,targetW,targetH); }
     else if(building.type==='wall'){ c.fillStyle=d.colors[0]; c.fillRect(-width/2,-height,width,height); c.fillStyle='#756b7c'; for(let i=-2;i<=2;i+=1){c.beginPath();c.moveTo(i*width/5,-height);c.lineTo(i*width/5+width/10,-height-12*scale);c.lineTo(i*width/5+width/5,-height);c.fill();} }
@@ -99,6 +101,6 @@ export class Renderer {
     if (battle?.active || battle?.result) { this.renderBattle(battle,time); return; }
     this.ground(state.camera,time);
     if(interaction.preview){ this.footprint(interaction.preview,state.camera,false,interaction.preview.valid); }
-    [...state.buildings].sort((a,b)=>(a.col+a.row)-(b.col+b.row)).forEach((b)=>this.building(b,state,b.id===interaction.selectedId,time));
+    [...state.buildings].sort((a,b)=>(a.col+a.row)-(b.col+b.row)).forEach((b)=>this.building(b,state,b.id===interaction.selectedId,time,b.id===interaction.liftedId));
   }
 }
