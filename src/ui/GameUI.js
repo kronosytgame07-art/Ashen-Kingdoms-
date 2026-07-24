@@ -2,6 +2,24 @@ import { RESOURCE_LABELS, resourceCaps, upgradeCost } from '../data/buildings.js
 import { isBuildingUnlocked, maxLevelFor, townHallLevel } from '../data/progression.js';
 import { UNITS, armyCapacity, armyHousing, isUnitUnlocked } from '../data/units.js';
 
+const BUILD_CATEGORIES = [
+  { id: 'resource', label: 'Ressources', icon: '⛏' },
+  { id: 'storage', label: 'Stockage', icon: '▣' },
+  { id: 'army', label: 'Militaire', icon: '⚔' },
+  { id: 'defense', label: 'Défense', icon: '♜' },
+  { id: 'trap', label: 'Pièges', icon: '✹' },
+  { id: 'decoration', label: 'Décoration', icon: '✦' }
+];
+
+const BUILD_ICONS = {
+  goldMine: '⛏', lumberMill: '♣', essenceWell: '✦', soulVault: '▣', barracks: '⚔', campfire: '♨',
+  runeTower: '♝', boneCatapult: '◉', soulSpire: '▲', cursedTrap: '✹', wall: '▥', clanCastle: '♜'
+};
+
+const resourceText = (cost = {}) => Object.entries(cost)
+  .map(([resource, amount]) => `${amount} ${RESOURCE_LABELS[resource]?.toLowerCase() ?? resource}`)
+  .join(' · ') || 'Gratuit';
+
 export class GameUI {
   constructor(definitions) {
     this.definitions = definitions;
@@ -9,11 +27,12 @@ export class GameUI {
     this.toastTimer = null;
     this.handlers = null;
     this.contextBuildingId = null;
+    this.buildMenuState = null;
+    this.activeBuildCategory = 'resource';
   }
 
   bind(handlers) {
     this.handlers = handlers;
-    document.querySelectorAll('.build-button').forEach((button) => button.addEventListener('click', () => handlers.onBuild(button.dataset.building)));
     document.querySelectorAll('.deploy-unit').forEach((button) => button.addEventListener('click', () => handlers.onSelectBattleUnit(button.dataset.unit)));
     this.$('upgradeButton').addEventListener('click', handlers.onUpgrade);
     this.$('removeButton').addEventListener('click', handlers.onRemove);
@@ -23,6 +42,10 @@ export class GameUI {
     this.$('returnVillageButton').addEventListener('click', handlers.onReturnVillage);
     this.$('closeContextButton').addEventListener('click', () => this.closeContext());
     this.$('contextBackdrop').addEventListener('click', () => this.closeContext());
+    this.$('openBuildMenuButton').addEventListener('click', () => this.openBuildMenu());
+    this.$('closeBuildMenuButton').addEventListener('click', () => this.closeBuildMenu());
+    this.$('buildMenuBackdrop').addEventListener('click', () => this.closeBuildMenu());
+    this.renderBuildTabs();
   }
 
   toast(message, kind = 'info') {
@@ -40,6 +63,7 @@ export class GameUI {
   openContext(state, building) {
     const definition = this.definitions[building.type];
     if (!definition?.panel) return false;
+    this.closeBuildMenu();
     this.contextBuildingId = building.id;
     this.$('contextKind').textContent = definition.panel === 'barracks' ? 'ENTRAÎNEMENT' : 'RASSEMBLEMENT';
     this.$('contextTitle').textContent = definition.name;
@@ -100,11 +124,82 @@ export class GameUI {
     }
   }
 
+  renderBuildTabs() {
+    const tabs = this.$('buildCategoryTabs');
+    tabs.replaceChildren();
+    const presentCategories = new Set(Object.values(this.definitions).map((definition) => definition.category));
+    for (const category of BUILD_CATEGORIES.filter((item) => presentCategories.has(item.id))) {
+      const button = document.createElement('button');
+      button.className = 'build-category-tab';
+      button.dataset.category = category.id;
+      button.innerHTML = `<span>${category.icon}</span><strong>${category.label}</strong>`;
+      button.addEventListener('click', () => {
+        this.activeBuildCategory = category.id;
+        this.renderBuildTabs();
+        this.renderBuildMenu();
+      });
+      button.classList.toggle('active', this.activeBuildCategory === category.id);
+      tabs.append(button);
+    }
+  }
+
+  openBuildMenu() {
+    if (!this.buildMenuState) return;
+    this.closeContext();
+    this.renderBuildTabs();
+    this.renderBuildMenu();
+    this.$('buildMenuBackdrop').classList.remove('hidden');
+    this.$('buildMenu').classList.remove('hidden');
+  }
+
+  closeBuildMenu() {
+    this.$('buildMenu')?.classList.add('hidden');
+    this.$('buildMenuBackdrop')?.classList.add('hidden');
+  }
+
+  renderBuildMenu() {
+    const state = this.buildMenuState;
+    if (!state) return;
+    const list = this.$('buildMenuList');
+    list.replaceChildren();
+    const currentTownHall = townHallLevel(state);
+    const entries = Object.entries(this.definitions).filter(([type, definition]) => type !== 'townHall' && definition.category === this.activeBuildCategory);
+
+    if (!entries.length) {
+      const empty = document.createElement('div');
+      empty.className = 'build-menu-empty';
+      empty.textContent = 'Aucun bâtiment dans cette catégorie.';
+      list.append(empty);
+      return;
+    }
+
+    for (const [type, definition] of entries) {
+      const unlocked = isBuildingUnlocked(type, state);
+      const requiredLevel = Number(Object.entries({ 1: ['goldMine','lumberMill','essenceWell','barracks','campfire','wall'], 2: ['soulVault'], 3: ['runeTower','boneCatapult','cursedTrap'], 4: ['soulSpire','clanCastle'] }).find(([, types]) => types.includes(type))?.[0] ?? 1);
+      const currentCount = state.buildings.filter((building) => building.type === type).length;
+      const limit = definition.buildLimit?.[currentTownHall] ?? definition.buildLimit ?? Infinity;
+      const maxed = currentCount >= limit;
+      const affordable = Object.entries(definition.cost).every(([resource, amount]) => (state.resources[resource] ?? 0) >= amount);
+      const button = document.createElement('button');
+      button.className = 'build-menu-item';
+      button.dataset.state = !unlocked ? 'locked' : maxed ? 'maxed' : affordable ? 'available' : 'poor';
+      button.disabled = !unlocked || maxed || !affordable;
+      const status = !unlocked ? `Trône niveau ${requiredLevel}` : maxed ? 'Maximum atteint' : affordable ? 'Disponible' : 'Ressources insuffisantes';
+      button.innerHTML = `<span class="build-menu-icon">${BUILD_ICONS[type] ?? '◆'}</span><div><strong>${definition.name}</strong><small>${resourceText(definition.cost)} · ${definition.buildTime}s</small><em>${status}</em></div><b>${currentCount}${Number.isFinite(limit) ? `/${limit}` : ''}</b>`;
+      button.addEventListener('click', () => {
+        this.closeBuildMenu();
+        this.handlers.onBuild(type);
+      });
+      list.append(button);
+    }
+  }
+
   setBattleMode(active) {
     this.closeContext();
+    this.closeBuildMenu();
     this.$('battleHud').classList.toggle('hidden', !active);
     this.$('deploymentBar').classList.toggle('hidden', !active);
-    document.querySelector('.buildbar').classList.toggle('hidden', active);
+    this.$('openBuildMenuButton').classList.toggle('hidden', active);
     this.$('objectiveCard').classList.toggle('hidden', active);
     this.$('selectionPanel').classList.add('hidden');
     this.$('centerCamera').classList.toggle('hidden', active);
@@ -142,22 +237,14 @@ export class GameUI {
   }
 
   update(state, selectedId, placementType, currentQuest = null) {
+    this.buildMenuState = state;
     const caps = resourceCaps(state);
     ['gold','wood','essence'].forEach((key) => {
       this.$(`${key}Value`).textContent = `${Math.floor(state.resources[key]).toLocaleString('fr-FR')} / ${caps[key].toLocaleString('fr-FR')}`;
     });
 
-    document.querySelectorAll('.build-button').forEach((button) => {
-      const type = button.dataset.building;
-      const definition = this.definitions[type];
-      const unlocked = definition && isBuildingUnlocked(type, state);
-      button.classList.toggle('active', placementType === type);
-      button.classList.toggle('locked', !unlocked);
-      button.disabled = !definition || !unlocked || Object.entries(definition.cost).some(([key, value]) => state.resources[key] < value);
-      button.title = unlocked ? definition.description : 'Débloqué au niveau supérieur du Trône corrompu';
-    });
-
     if (this.$('objectiveText')) this.$('objectiveText').textContent = currentQuest?.text ?? `Trône corrompu niveau ${townHallLevel(state)} · Développez librement votre royaume`;
+    if (!this.$('buildMenu').classList.contains('hidden')) this.renderBuildMenu();
 
     if (this.contextBuildingId) {
       const contextBuilding = state.buildings.find((item) => item.id === this.contextBuildingId);
