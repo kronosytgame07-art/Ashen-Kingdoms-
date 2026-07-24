@@ -50,6 +50,13 @@ export const BUILDINGS = {
     production: null, storage: null, housing: { base: 12, perLevel: 6 },
     colors: ['#2b2228', '#171216', '#9dff7a'], sprite: null, category: 'army', panel: 'campfire'
   },
+  clanCastle: {
+    name: 'Château de Clan', description: 'Reçoit les renforts donnés par les membres du clan et les conserve pour la défense.',
+    size: { w: 3, h: 3 }, cost: { gold: 850, wood: 700, essence: 120 }, buildTime: 40, maxLevel: 5,
+    production: null, storage: null,
+    reinforcementHousing: { base: 8, perLevel: 4 },
+    colors: ['#31273a', '#17121c', '#d3a6ff'], sprite: null, category: 'army', panel: 'clanCastle', buildLimit: 1
+  },
   runeTower: {
     name: 'Tour runique', description: 'Tire rapidement sur la cible la plus proche.',
     size: { w: 1, h: 1 }, cost: { gold: 320, essence: 35 }, buildTime: 22, maxLevel: 5,
@@ -87,13 +94,13 @@ export const BUILDINGS = {
 };
 
 export function upgradeCost(building) {
-  const base = building.type === 'townHall' ? 240 : building.type === 'wall' ? 45 : building.type === 'cursedTrap' ? 70 : 90;
+  const base = building.type === 'townHall' ? 240 : building.type === 'wall' ? 45 : building.type === 'cursedTrap' ? 70 : building.type === 'clanCastle' ? 220 : 90;
   const factor = Math.pow(building.type === 'townHall' ? 1.75 : 1.55, building.level - 1);
   return { gold: Math.round(base * factor), wood: Math.round(base * 0.78 * factor) };
 }
 
 export function upgradeTime(building) {
-  const base = building.type === 'townHall' ? 18 : building.type === 'wall' ? 4 : building.type === 'cursedTrap' ? 5 : 7;
+  const base = building.type === 'townHall' ? 18 : building.type === 'wall' ? 4 : building.type === 'cursedTrap' ? 5 : building.type === 'clanCastle' ? 18 : 7;
   return Math.round(base + building.level * (building.type === 'townHall' ? 8 : 3.5));
 }
 
