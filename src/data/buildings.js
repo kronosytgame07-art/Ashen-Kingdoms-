@@ -8,7 +8,7 @@ export const BUILDINGS = {
     storage: { gold: 1200, wood: 1200, essence: 300 },
     colors: ['#29222f', '#18151d', '#a66cff'],
     sprite: 'IMG_3440.png',
-    spriteSheet: { columns: 5, rows: 2, frames: 10, fps: 2.2, removeBackground: true, backgroundTolerance: 32 },
+    spriteSheet: { columns: 4, rows: 2, frames: 8, fps: 1.6, removeBackground: true, backgroundTolerance: 32 },
     category: 'core'
   },
   goldMine: {
