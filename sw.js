@@ -1,19 +1,39 @@
 /**
- * Service Worker — Ashen Kingdoms PWA
- * Stratégie : Cache-first pour les assets statiques, Network-first pour le reste.
+ * sw.js — Service Worker for Ashen Kingdoms PWA
+ * Strategy: Cache-first for static assets, network-first for API calls.
  */
+
 const CACHE_NAME = 'ashen-kingdoms-v1';
-const PRECACHE = [
+
+const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/styles.css',
+  '/manifest.json',
   '/src/main.js',
-  '/manifest.json'
+  '/src/core/Game.js',
+  '/src/core/Renderer.js',
+  '/src/core/VillageRenderer.js',
+  '/src/core/BattleRenderer.js',
+  '/src/core/EventBus.js',
+  '/src/core/Grid.js',
+  '/src/core/Economy.js',
+  '/src/core/TrainingManager.js',
+  '/src/core/BattleManager.js',
+  '/src/core/ClanManager.js',
+  '/src/core/SaveManager.js',
+  '/src/core/ProfileManager.js',
+  '/src/core/AssetManager.js',
+  '/src/ui/GameUI.js',
+  '/src/data/buildings.js',
+  '/src/data/units.js',
+  '/src/data/progression.js',
+  '/src/data/battle.js',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE))
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
@@ -21,7 +41,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))
+      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
     )
   );
   self.clients.claim();

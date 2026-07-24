@@ -1,16 +1,15 @@
 {
   "name": "Ashen Kingdoms",
-  "short_name": "AshenKingdoms",
-  "description": "Construisez et défendez votre royaume maudit dans un univers dark fantasy.",
+  "short_name": "Ashen Kingdoms",
+  "description": "Clash of Clans-style dark fantasy kingdom builder.",
   "start_url": "/",
-  "display": "fullscreen",
+  "display": "standalone",
   "orientation": "landscape",
-  "background_color": "#100d15",
+  "background_color": "#120f18",
   "theme_color": "#120f18",
   "lang": "fr",
   "icons": [
-    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
-  ],
-  "categories": ["games"]
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
 }
