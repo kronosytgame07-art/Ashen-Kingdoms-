@@ -29,18 +29,22 @@
       <canvas id="gameCanvas" aria-label="Village Ashen Kingdoms"></canvas>
       <div class="vignette"></div>
       <section id="objectiveCard" class="objective-card"><span class="objective-icon">☠</span><div><small>OBJECTIF</small><strong id="objectiveText">Développez votre royaume maudit</strong></div></section>
+
       <section id="selectionPanel" class="selection-panel hidden" aria-live="polite">
         <div><small id="selectionType">BÂTIMENT</small><h2 id="selectionName">Trône corrompu</h2><p id="selectionDescription" class="selection-description"></p><p id="selectionInfo">Niveau 1</p></div>
-        <div class="selection-actions"><button id="moveButton" class="secondary">Déplacer</button><button id="upgradeButton">Améliorer</button><button id="removeButton" class="danger">Retirer</button></div>
+        <div class="selection-actions"><button id="upgradeButton">Améliorer</button><button id="removeButton" class="danger">Retirer</button></div>
       </section>
-      <section id="trainingPanel" class="training-panel">
-        <div class="training-header"><div><small>ARMÉE</small><strong id="armyCapacity">0 / 0</strong></div><div id="trainingQueue" class="training-queue">File vide</div></div>
-        <div class="unit-buttons">
-          <button class="unit-button" data-unit="skeleton"><span>☠</span><strong>Squelette</strong><small>20 âmes · 6 s</small></button>
-          <button class="unit-button" data-unit="ghoul"><span>♟</span><strong>Goule</strong><small>45 âmes · 12 s</small></button>
-          <button class="unit-button" data-unit="necromancer"><span>✦</span><strong>Nécromancien</strong><small>90 âmes · 24 s</small></button>
-        </div>
+
+      <div id="contextBackdrop" class="context-backdrop hidden"></div>
+      <section id="buildingContext" class="building-context hidden" role="dialog" aria-modal="true" aria-labelledby="contextTitle">
+        <header class="context-header">
+          <div><small id="contextKind">BÂTIMENT</small><h2 id="contextTitle">Caserne maudite</h2></div>
+          <button id="closeContextButton" class="context-close" aria-label="Fermer">×</button>
+        </header>
+        <p id="contextDescription" class="context-description"></p>
+        <div id="contextBody" class="context-body"></div>
       </section>
+
       <button id="centerCamera" class="center-camera" aria-label="Recentrer la caméra">⌂</button>
       <div class="gesture-hint show">Pincez avec deux doigts pour zoomer</div>
 
@@ -65,8 +69,12 @@
       <button class="build-button" data-building="lumberMill"><span class="build-icon">♣</span><strong>Scierie</strong><small>100 or · 8 s</small></button>
       <button class="build-button" data-building="essenceWell"><span class="build-icon">✦</span><strong>Puits d’âmes</strong><small>160 or · 10 s</small></button>
       <button class="build-button" data-building="barracks"><span class="build-icon">⚔</span><strong>Caserne</strong><small>220 bois · 12 s</small></button>
+      <button class="build-button" data-building="campfire"><span class="build-icon">♨</span><strong>Brasier</strong><small>180 or · 140 bois</small></button>
       <button class="build-button" data-building="soulVault"><span class="build-icon">▣</span><strong>Caveau</strong><small>Trône niv. 2</small></button>
       <button class="build-button" data-building="runeTower"><span class="build-icon">♝</span><strong>Tour runique</strong><small>Trône niv. 3</small></button>
+      <button class="build-button" data-building="boneCatapult"><span class="build-icon">◉</span><strong>Catapulte</strong><small>Dégâts de zone</small></button>
+      <button class="build-button" data-building="soulSpire"><span class="build-icon">▲</span><strong>Flèche</strong><small>Anti-aérien</small></button>
+      <button class="build-button" data-building="cursedTrap"><span class="build-icon">✹</span><strong>Piège</strong><small>Caché</small></button>
       <button class="build-button" data-building="wall"><span class="build-icon">▥</span><strong>Rempart</strong><small>25 or / segment</small></button>
     </nav>
     <div id="toast" class="toast" role="status"></div>
