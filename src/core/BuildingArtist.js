@@ -1,669 +1,1024 @@
 /**
- * BuildingArtist.js  — Ashen Kingdoms
- * Taille de chaque bâtiment = multiple de tileW (88*zoom).
- * Chaque draw_fn reçoit :
- *   c       CanvasRenderingContext2D (origin = ancre bas-centre du bâtiment)
- *   tileW   largeur d'une tuile en pixels écran (88 * camera.zoom)
- *   tileH   hauteur d'une tuile en pixels écran (44 * camera.zoom)
- *   sw, sh  empreinte en tuiles (size.w, size.h)
- *   level   1 | 2 | 3
- *   t       secondes continues
- *   flicker sin pulsé 0..1 par bâtiment
- *   sel     boolean sélectionné
+ * BuildingArtist.js  —  Ashen Kingdoms
+ *
+ * Chaque bâtiment est rendu comme un PRISME ISOMÉTRIQUE vu de coin :
+ *   - la base EST le losange de l'empreinte (sw × sh tuiles)
+ *   - la facade gauche (face col+) descend vers la gauche
+ *   - la facade droite (face row+) descend vers la droite
+ *   - le toit porte les détails (créneaux, spires, toiture…)
+ *
+ * Système de coordonnées transmis par VillageRenderer :
+ *   origin = centre-BAS du losange (point le plus bas du losange = point "sud")
+ *   hw  = (sw * tileW) / 2   demi-largeur horizontale
+ *   hd  = (sh * tileH) / 2 * (sw/sh)  correction aspect
+ *   Les 4 coins du losange (en coords locales, origin=sud) :
+ *     S  = (0,      0)
+ *     W  = (-hw*sw, -hd*sw)   point ouest
+ *     N  = (0,      -hd*(sw+sh))  point nord
+ *     E  = (+hw*sh, -hd*sh)   point est
+ *
+ * En pratique on passe directement :
+ *   iso.S, iso.W, iso.N, iso.E  — les 4 coins du losange en px
+ *   iso.hw, iso.hh               — demi-largeur et demi-diagonale verticale
+ *   iso.wallH                    — hauteur des murs en px (réglable par bâtiment)
+ *
+ * Signature de chaque drawFn :
+ *   drawFn(c, iso, level, t, f, sel)
+ *     c     CanvasRenderingContext2D
+ *     iso   { S,W,N,E, hw,hh, wallH, sw,sh, tileW,tileH }
+ *     level 1|2|3
+ *     t     secondes
+ *     f     flicker 0..1
+ *     sel   bool
  */
 
-// ── Palette ────────────────────────────────────────────────────────────────
-const P = {
-  black:  '#07050d',
-  stone0: '#1e1828', stone1: '#2a2236', stone2: '#3a3050', stone3: '#4e4268',
-  glow:   '#b87cff', glowDim:'#7c3fcf',
-  amber:  '#e8a630', amberDim:'#a07020',
-  green:  '#62dca0',
-  blood:  '#d84858',
-  blue:   '#58b8ff',
-  white:  '#f0eaf8',
-  bone:   '#c8b898',
-  wood:   '#8a5a30',
-  gold:   '#f0c458',
-  lava:   '#e03810',
+// ── Palette ───────────────────────────────────────────────────────
+const C = {
+  black:   '#07050d',
+  stone0:  '#1e1828', stone1: '#2a2236', stone2: '#3a3050', stone3: '#4e4268',
+  sideL:   '#1a1528', // face gauche (plus sombre)
+  sideR:   '#251e38', // face droite
+  roofD:   '#3a3050', // toit sombre
+  roofL:   '#4e4268', // toit clair
+  glow:    '#b87cff',
+  amber:   '#e8a630',
+  green:   '#62dca0',
+  blood:   '#d84858',
+  blue:    '#58b8ff',
+  white:   '#f0eaf8',
+  bone:    '#c8b898',
+  wood:    '#8a5a30',
+  gold:    '#f0c458',
+  lava:    '#e03810',
+  purple:  '#6a1eaa',
 };
 
-// ── Primitives ──────────────────────────────────────────────────────────────
-function rrect(c,x,y,w,h,r){r=Math.min(r,w/2,h/2);c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();}
-function poly(c,...pts){c.beginPath();c.moveTo(pts[0],pts[1]);for(let i=2;i<pts.length;i+=2)c.lineTo(pts[i],pts[i+1]);c.closePath();}
-function linGrad(c,x0,y0,x1,y1,stops){const g=c.createLinearGradient(x0,y0,x1,y1);stops.forEach(([p,col])=>g.addColorStop(p,col));return g;}
-function glowFill(c,col,blur){c.shadowColor=col;c.shadowBlur=blur;}
-function noGlow(c){c.shadowBlur=0;}
+// ── Helpers isométriques ───────────────────────────────────────────────
 
-/** Ombre portée sous un bâtiment */
-function dropShadow(c,w,h){c.save();c.globalAlpha=.4;c.fillStyle='#000';c.beginPath();c.ellipse(0,4,w*.54,h*.18,0,0,Math.PI*2);c.fill();c.restore();}
+/**
+ * Calcule les 4 coins d'un losange isométrique.
+ * Origin = point SUD (bas du losange).
+ * sw, sh = taille en tuiles
+ * tileW, tileH = taille d'une tuile en px
+ */
+function isoCorners(sw, sh, tileW, tileH) {
+  // demi-vecteurs iso
+  const ex = tileW / 2;  // vecteur unitaire est X
+  const ey = tileH / 2;  // vecteur unitaire est Y (descend)
+  // Dans l'espace iso, une tuile (dc, dr) donne un déplacement :
+  //   dx = (dc - dr) * tileW/2
+  //   dy = (dc + dr) * tileH/2
+  // Coin sud   = origine (col+sw, row+sh) -> (0,0) relatif
+  // Coin ouest = (col+0,  row+sh)
+  // Coin nord  = (col+0,  row+0)
+  // Coin est   = (col+sw, row+0)
+  // En coordonnées locales (sud = 0,0) :
+  const S = { x: 0,                                  y: 0 };
+  const W = { x: -(sw * ex + sh * ex),                y: -(sw * ey - sh * ey) }; // (-sw+sh)*ex, (-sw-sh)*ey ... recalc
+  const N = { x: 0,                                  y: -(sw * ey + sh * ey) };
+  const E = { x:  (sw * ex + sh * ex),                y: -(sw * ey - sh * ey) };
+  // Correction : en iso 2:1 :
+  //   S = bas du losange
+  //   W = gauche
+  //   N = haut
+  //   E = droite
+  const Sx = 0,  Sy = 0;
+  const Wx = -(sw * ex), Wy = sw * ey;
+  const Ex = (sh * ex),  Ey = sh * ey;
+  // Recalcul propre :
+  // S = W + E  (vecteur)
+  const rS = { x: 0, y: 0 };
+  const rW = { x: -sw * ex, y: -sw * ey }; // haut-gauche relatif
+  const rE = { x:  sh * ex, y: -sh * ey }; // haut-droite relatif
+  // W_corner = S + rW  = rW
+  // E_corner = S + rE  = rE
+  // N_corner = rW + rE
+  return {
+    S: { x: 0,         y: 0 },
+    W: { x: -sw * ex,  y:  sw * ey },   // ATTENTION : en iso le coin W est en bas-gauche
+    N: { x: (sh - sw) * ex, y: -(sw + sh) * ey }, // recalc below
+    E: { x:  sh * ex,  y:  sh * ey },
+  };
+  // NOTE : ce n'est pas le bon calcul direct, on le remplace ci-dessous.
+}
 
-/** Corps de tour */
-function towerBody(c,w,h,top,bot){
-  const g=linGrad(c,-w/2,-h,w/2,0,[[0,top],[1,bot]]);
-  c.fillStyle=g;c.strokeStyle=P.black;c.lineWidth=2;
-  c.fillRect(-w/2,-h,w,h);c.strokeRect(-w/2,-h,w,h);
-  // joints horizontaux
-  c.save();c.globalAlpha=.18;c.strokeStyle='#000';c.lineWidth=.8;
-  for(let i=1;i<4;i++){c.beginPath();c.moveTo(-w/2,-h*i/4);c.lineTo(w/2,-h*i/4);c.stroke();}
+/**
+ * Renvoie les 4 coins du losange d'empreinte en coordonnées locales
+ * avec origin = centre du losange.
+ * hw = sw * tileW/2,  hh = sh * tileH/2
+ * Les coins isométriques standard 2:1 (carré sw=sh=1) :
+ *   TOP    = (0, -hh)     point nord
+ *   RIGHT  = (+hw, 0)     point est
+ *   BOTTOM = (0, +hh)     point sud
+ *   LEFT   = (-hw, 0)     point ouest
+ * Pour sw != sh on étire.
+ */
+function diamond(sw, sh, tileW, tileH) {
+  const hw = sw * tileW / 2;  // demi-largeur
+  const hh = sh * tileH / 2;  // demi-hauteur verticale
+  // En iso 2:1, pour un carré de N tuiles :
+  //   hw = N * tileW/2 = N*44
+  //   hh = N * tileH/2 = N*22
+  // On centre sur le milieu du losange
+  return {
+    top:    { x: 0,    y: -hh },   // nord
+    right:  { x: hw,   y: 0 },     // est
+    bottom: { x: 0,    y:  hh },   // sud
+    left:   { x: -hw,  y: 0 },     // ouest
+    hw, hh,
+  };
+}
+
+/** Dessine le losange de toit (face top d'un prisme) */
+function drawRoof(c, d, fill, strokeCol) {
+  c.beginPath();
+  c.moveTo(d.top.x,    d.top.y);
+  c.lineTo(d.right.x,  d.right.y);
+  c.lineTo(d.bottom.x, d.bottom.y);
+  c.lineTo(d.left.x,   d.left.y);
+  c.closePath();
+  c.fillStyle = fill; c.fill();
+  if (strokeCol) { c.strokeStyle = strokeCol; c.lineWidth = 1.5; c.stroke(); }
+}
+
+/** Face gauche du prisme (col+) : bottom-left + top-left + wall down */
+function drawFaceLeft(c, d, wallH, fill) {
+  // Face gauche = entre left et bottom, qui descend de wallH
+  c.beginPath();
+  c.moveTo(d.left.x,          d.left.y);
+  c.lineTo(d.bottom.x,        d.bottom.y);
+  c.lineTo(d.bottom.x,        d.bottom.y + wallH);
+  c.lineTo(d.left.x,          d.left.y   + wallH);
+  c.closePath();
+  c.fillStyle = fill; c.fill();
+  c.strokeStyle = C.black; c.lineWidth = 1.2; c.stroke();
+}
+
+/** Face droite du prisme (row+) : bottom-right + top-right + wall down */
+function drawFaceRight(c, d, wallH, fill) {
+  c.beginPath();
+  c.moveTo(d.right.x,  d.right.y);
+  c.lineTo(d.bottom.x, d.bottom.y);
+  c.lineTo(d.bottom.x, d.bottom.y + wallH);
+  c.lineTo(d.right.x,  d.right.y  + wallH);
+  c.closePath();
+  c.fillStyle = fill; c.fill();
+  c.strokeStyle = C.black; c.lineWidth = 1.2; c.stroke();
+}
+
+/** Outline de sélection autour du losange */
+function selDiamond(c, d, wallH, col) {
+  c.save();
+  c.shadowColor = col; c.shadowBlur = 18;
+  c.strokeStyle = col; c.lineWidth = 2.2;
+  c.setLineDash([5, 3]);
+  c.beginPath();
+  c.moveTo(d.top.x,    d.top.y - 2);
+  c.lineTo(d.right.x + 2, d.right.y);
+  c.lineTo(d.bottom.x, d.bottom.y + wallH + 2);
+  c.lineTo(d.left.x - 2, d.left.y + wallH);
+  c.closePath(); c.stroke();
+  c.setLineDash([]); c.shadowBlur = 0; c.restore();
+}
+
+/** Ligne de créneaux isométriques sur le bord gauche du toit */
+function crenelsLeft(c, d, n, cH, col, strokeCol) {
+  const step = 1 / n;
+  for (let i = 0; i < n; i += 2) {
+    const t0 = i * step, t1 = (i + 1) * step;
+    const x0 = d.left.x  + (d.bottom.x - d.left.x)  * t0;
+    const y0 = d.left.y  + (d.bottom.y - d.left.y)  * t0;
+    const x1 = d.left.x  + (d.bottom.x - d.left.x)  * t1;
+    const y1 = d.left.y  + (d.bottom.y - d.left.y)  * t1;
+    c.beginPath();
+    c.moveTo(x0, y0); c.lineTo(x0, y0 - cH);
+    c.lineTo(x1, y1 - cH); c.lineTo(x1, y1);
+    c.closePath();
+    c.fillStyle = col; c.fill();
+    c.strokeStyle = strokeCol ?? C.black; c.lineWidth = 1; c.stroke();
+  }
+}
+
+function crenelsRight(c, d, n, cH, col, strokeCol) {
+  const step = 1 / n;
+  for (let i = 0; i < n; i += 2) {
+    const t0 = i * step, t1 = (i + 1) * step;
+    const x0 = d.right.x + (d.bottom.x - d.right.x) * t0;
+    const y0 = d.right.y + (d.bottom.y - d.right.y) * t0;
+    const x1 = d.right.x + (d.bottom.x - d.right.x) * t1;
+    const y1 = d.right.y + (d.bottom.y - d.right.y) * t1;
+    c.beginPath();
+    c.moveTo(x0, y0); c.lineTo(x0, y0 - cH);
+    c.lineTo(x1, y1 - cH); c.lineTo(x1, y1);
+    c.closePath();
+    c.fillStyle = col; c.fill();
+    c.strokeStyle = strokeCol ?? C.black; c.lineWidth = 1; c.stroke();
+  }
+}
+
+/** Fenêtre-fente sur la face gauche */
+function windowLeft(c, d, wallH, tx, col, f) {
+  const ex = d.left.x  + (d.bottom.x - d.left.x)  * tx;
+  const ey = d.left.y  + (d.bottom.y - d.left.y)  * tx;
+  const wx = (d.bottom.x - d.left.x) * .04;
+  const wy = wallH * .35;
+  c.save(); c.shadowColor = col; c.shadowBlur = 5 + f * 7;
+  c.fillStyle = col;
+  c.beginPath();
+  c.moveTo(ex - wx, ey + wallH * .2);
+  c.lineTo(ex,      ey + wallH * .2 - wy * .5);
+  c.lineTo(ex + wx, ey + wallH * .2);
+  c.lineTo(ex + wx, ey + wallH * .7);
+  c.lineTo(ex,      ey + wallH * .7 + wy * .5);
+  c.lineTo(ex - wx, ey + wallH * .7);
+  c.closePath(); c.fill(); c.shadowBlur = 0; c.restore();
+}
+
+/** Torche iso : pos en tx (0..1) le long du bord gauche ou droit */
+function torchOnEdge(c, d, wallH, tx, side, f, col) {
+  col = col ?? C.amber;
+  const edge = side === 'L'
+    ? { ax: d.left.x,  ay: d.left.y,  bx: d.bottom.x, by: d.bottom.y }
+    : { ax: d.right.x, ay: d.right.y, bx: d.bottom.x,  by: d.bottom.y };
+  const x = edge.ax + (edge.bx - edge.ax) * tx;
+  const y = edge.ay + (edge.by - edge.ay) * tx + wallH * .3;
+  const sz = Math.max(2, wallH * .08);
+  // tige
+  c.save(); c.strokeStyle = C.bone; c.lineWidth = sz * .5;
+  c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - sz * 2.5); c.stroke();
+  // flamme
+  c.shadowColor = col; c.shadowBlur = sz * (3 + f * 4);
+  c.fillStyle = col;
+  c.beginPath(); c.ellipse(x, y - sz * 3.2, sz * .8, sz * (1.6 + f * .8), 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = 'rgba(255,255,200,.55)';
+  c.beginPath(); c.ellipse(x, y - sz * 3.6, sz * .4, sz * (.8 + f * .3), 0, 0, Math.PI * 2); c.fill();
+  c.shadowBlur = 0; c.restore();
+}
+
+/** Spire isométrique centrée sur le toit */
+function isoSpire(c, d, wallH, h, fill, glowCol, f) {
+  const cx = d.top.x, cy = d.top.y + (d.bottom.y - d.top.y) * .5; // centre toit
+  const bw = d.hw * .3;
+  c.save();
+  if (glowCol) { c.shadowColor = glowCol; c.shadowBlur = 12 + f * 12; }
+  c.fillStyle = fill;
+  c.beginPath();
+  c.moveTo(cx - bw, cy - wallH * .1);
+  c.lineTo(cx, cy - wallH * .1 - h);
+  c.lineTo(cx + bw, cy - wallH * .1);
+  c.closePath(); c.fill();
+  c.strokeStyle = C.black; c.lineWidth = 1.4; c.stroke();
+  if (glowCol) {
+    // orbe au sommet
+    const or = Math.max(3, h * .06);
+    c.fillStyle = glowCol;
+    c.beginPath(); c.arc(cx, cy - wallH * .1 - h, or, 0, Math.PI * 2); c.fill();
+  }
+  c.shadowBlur = 0; c.restore();
+}
+
+/** Orbe glow */
+function orb(c, x, y, r, col, blur) {
+  c.save(); c.shadowColor = col; c.shadowBlur = blur;
+  c.fillStyle = col; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+  c.shadowBlur = 0; c.restore();
+}
+
+/** Bannière iso au bord nord du toit */
+function isoBanner(c, d, wallH, h, col, runeCol) {
+  const cx = (d.top.x + d.right.x) / 2;
+  const cy = (d.top.y + d.right.y) / 2 - wallH * .05;
+  const bw = d.hw * .12;
+  c.beginPath();
+  c.moveTo(cx - bw, cy - wallH * .1);
+  c.lineTo(cx + bw, cy - wallH * .1);
+  c.lineTo(cx + bw, cy - wallH * .1 - h * .82);
+  c.lineTo(cx,      cy - wallH * .1 - h);
+  c.lineTo(cx - bw, cy - wallH * .1 - h * .82);
+  c.closePath();
+  c.fillStyle = col; c.fill(); c.strokeStyle = C.black; c.lineWidth = 1.2; c.stroke();
+  c.save(); c.fillStyle = runeCol; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = `${Math.max(7, h * .4)}px serif`; c.globalAlpha = .8;
+  c.fillText('᛭', cx, cy - wallH * .1 - h * .5); c.restore();
+}
+
+/** Ombre au sol */
+function groundShadow(c, d) {
+  c.save(); c.globalAlpha = .35;
+  c.beginPath();
+  c.moveTo(d.top.x, d.top.y + 5);
+  c.lineTo(d.right.x + 3, d.right.y + 5);
+  c.lineTo(d.bottom.x, d.bottom.y + 5);
+  c.lineTo(d.left.x - 3, d.left.y + 5);
+  c.closePath(); c.fillStyle = '#000'; c.fill();
   c.restore();
 }
 
-/** Créneaux sur le haut d'un corps de tour */
-function battlements(c,w,topY,crenW,crenH,col){
-  const n=Math.max(2,Math.round(w/crenW));
-  const step=w/n;
-  c.fillStyle=col;c.strokeStyle=P.black;c.lineWidth=1.2;
-  for(let i=0;i<n;i+=2){c.fillRect(-w/2+i*step,topY-crenH,step,crenH);c.strokeRect(-w/2+i*step,topY-crenH,step,crenH);}
-}
+// ───────────────────────────────────────────────────────────────────────────
+//  BÂTIMENTS
+//  Signature : drawFn(c, iso, level, t, f, sel)
+//  iso = { d, wallH, tileW, tileH, sw, sh }
+//  d   = diamond(sw, sh, tileW, tileH)
+// ───────────────────────────────────────────────────────────────────────────
 
-/** Flèche/spire pointue */
-function spire(c,bw,baseY,tip,fill,stroke='#07050d'){
-  poly(c,-bw/2,baseY,0,tip,bw/2,baseY);
-  c.fillStyle=fill;c.fill();c.strokeStyle=stroke;c.lineWidth=1.8;c.stroke();
-}
-
-/** Torche animée */
-function torch(c,x,y,sz,f,col=P.amber){
-  c.save();
-  glowFill(c,col,(8+f*10)*sz);
-  c.fillStyle=col;
-  c.beginPath();c.ellipse(x,y-(3+f*2)*sz,2.2*sz,(5+f*3)*sz,0,0,Math.PI*2);c.fill();
-  c.fillStyle='rgba(255,255,200,.5)';
-  c.beginPath();c.ellipse(x,y-(4+f*2)*sz,1*sz,(2.5+f)*sz,0,0,Math.PI*2);c.fill();
-  noGlow(c);c.restore();
-}
-
-/** Fenêtre-fente lumineuse */
-function windowSlit(c,cx,cy,sw,sh,col,f){
-  c.save();glowFill(c,col,6+f*8);
-  rrect(c,cx-sw/2,cy-sh/2,sw,sh,sw*.4);
-  c.fillStyle=col;c.fill();noGlow(c);c.restore();
-}
-
-/** Orbe lumineux */
-function orb(c,x,y,r,col,blur){
-  c.save();glowFill(c,col,blur);
-  c.fillStyle=col;c.beginPath();c.arc(x,y,r,0,Math.PI*2);c.fill();noGlow(c);c.restore();
-}
-
-/** Sélection outline */
-function selBox(c,w,h,col){
-  c.save();glowFill(c,col,18);c.strokeStyle=col;c.lineWidth=2.2;
-  c.setLineDash([5,3]);c.strokeRect(-w/2-3,-h-3,w+6,h+6);c.setLineDash([]);noGlow(c);c.restore();
-}
-
-// ── Dispatch ────────────────────────────────────────────────────────────────
 export const DRAW_FN = {};
 
-// ============================================================
-// 1. TRÔNE CORROMPU   (4×4 tuiles)
-// ============================================================
-DRAW_FN.townHall = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.9,  H=tileH*sh*1.8*(1+level*.08);
-  dropShadow(c,W,tileH*sh*.5);
+// helpers locaux
+function mkIso(sw, sh, tileW, tileH, wallFactor) {
+  const d = diamond(sw, sh, tileW, tileH);
+  const wallH = tileH * sh * wallFactor;
+  return { d, wallH, tileW, tileH, sw, sh };
+}
 
-  // Corps central
-  const kw=W*.52,kh=H*.75;
-  towerBody(c,kw,kh,'#3e2a52','#221836');
+// ───────────────────────────────────────────────────────────────────────────
+// 1. TRÔNE CORROMPU  4×4
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.townHall = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
 
-  // Tours latérales
-  const tw=W*.22, th=H*.60;
-  for(const sx of[-1,1]){
-    c.save();c.translate(sx*W*.34,0);
-    towerBody(c,tw,th,'#312040','#1a1228');
-    battlements(c,tw,-th,tw*.48,tileH*.25,'#3e2850');
-    if(level>=2) windowSlit(c,0,-th*.55,tileW*.07,tileH*.35,'#aa60ff',f);
+  // Murs
+  drawFaceLeft( c, d, wallH, '#2a1e3a');
+  drawFaceRight(c, d, wallH, '#1e1530');
+  // Toit
+  drawRoof(c, d, '#3a2a52', C.black);
+
+  // Créneaux
+  const cH = wallH * .22;
+  crenelsLeft( c, d, 6, cH, '#4a3462', C.black);
+  crenelsRight(c, d, 6, cH, '#4a3462', C.black);
+
+  // Murs : joints de pierre
+  c.save(); c.globalAlpha = .15; c.strokeStyle = C.black; c.lineWidth = .7;
+  for (let i = 1; i < 4; i++) {
+    const ti = i / 4;
+    // gauche
+    const lx0 = d.left.x  + (d.bottom.x - d.left.x) * ti,  ly0 = d.left.y  + (d.bottom.y - d.left.y) * ti;
+    c.beginPath(); c.moveTo(lx0, ly0); c.lineTo(lx0, ly0 + wallH); c.stroke();
+    // droite
+    const rx0 = d.right.x + (d.bottom.x - d.right.x) * ti, ry0 = d.right.y + (d.bottom.y - d.right.y) * ti;
+    c.beginPath(); c.moveTo(rx0, ry0); c.lineTo(rx0, ry0 + wallH); c.stroke();
+  }
+  c.restore();
+
+  // Spires  — une centrale + deux latérales (Lv2)
+  const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+  const cy = d.top.y + (d.bottom.y - d.top.y) * .5;
+  isoSpire(c, d, wallH, wallH * (1.4 + level * .2), '#5a2878', '#d07aff', f);
+
+  if (level >= 2) {
+    // spires sur coins gauche et droite
+    const sdL = diamond(1, 1, tileW, tileH);
+    c.save(); c.translate(d.left.x, d.left.y);
+    isoSpire(c, { ...iso, d: sdL }, 0, wallH * .8, '#3a1e5a', '#aa60ff', f * .7);
+    c.restore();
+    c.save(); c.translate(d.right.x, d.right.y);
+    isoSpire(c, { ...iso, d: sdL }, 0, wallH * .8, '#3a1e5a', '#aa60ff', f * .7);
     c.restore();
   }
 
-  // Créneaux keep
-  battlements(c,kw,-kh,kw*.35,tileH*.3,'#502e68');
-
-  // Spire centrale
-  c.save();glowFill(c,'#d07aff',(14+f*12));
-  spire(c,kw*.55,-kh,-H-tileH*.4,'#5a2878');
-  noGlow(c);c.restore();
-  orb(c,0,-H-tileH*.38,tileW*.06,'#d07aff',(16+f*14));
-
-  // Level 2 : spires secondaires
-  if(level>=2)for(const sx of[-1,1]){
-    c.save();c.translate(sx*W*.34,0);
-    c.save();glowFill(c,'#aa60ff',8);spire(c,tw*.5,-th,-th-tileH*.25,'#3a1e5a');noGlow(c);c.restore();
-    c.restore();
-  }
-
-  // Level 3 : couronne d'orbes
-  if(level>=3)for(let i=0;i<6;i++){
-    const a=i/6*Math.PI*2+t*.6;
-    orb(c,kw*.4*Math.cos(a),-kh*1.05+kw*.15*Math.sin(a),tileW*.04,'#e0b0ff',(10+f*8));
+  if (level >= 3) {
+    // couronne d'orbes rotatifs
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * Math.PI * 2 + t * .6;
+      orb(c, cx + d.hw * .35 * Math.cos(a), cy - wallH * .6 + d.hh * .18 * Math.sin(a), tileW * .04, '#e0b0ff', 10 + f * 9);
+    }
   }
 
   // Torches
-  torch(c,-kw*.4,-kh*.4,tileW*.07,f);
-  torch(c, kw*.4,-kh*.4,tileW*.07,f);
-  if(level>=2){torch(c,-W*.45,-th*.45,tileW*.06,f);torch(c,W*.45,-th*.45,tileW*.06,f);}
+  torchOnEdge(c, d, wallH, .25, 'L', f);
+  torchOnEdge(c, d, wallH, .25, 'R', f);
+  if (level >= 2) { torchOnEdge(c, d, wallH, .72, 'L', f); torchOnEdge(c, d, wallH, .72, 'R', f); }
 
-  // Fenêtre centrale
-  windowSlit(c,0,-kh*.55,tileW*.10,tileH*.5,'#d07aff',f);
-  if(level>=3) windowSlit(c,0,-kh*.82,tileW*.10,tileH*.22,'#e0b0ff',f);
+  // Fenêtres
+  windowLeft(c, d, wallH, .45, '#d07aff', f);
 
   // Bannière
-  const bh=tileH*(.8+level*.1);
-  poly(c,-tileW*.11,-kh*.8, tileW*.11,-kh*.8, tileW*.11,-kh*.8+bh*.85, 0,-kh*.8+bh, -tileW*.11,-kh*.8+bh*.85);
-  c.fillStyle='#5a1888';c.fill();c.strokeStyle=P.black;c.lineWidth=1.5;c.stroke();
-  c.save();c.fillStyle='#e0b0ff';c.textAlign='center';c.textBaseline='middle';
-  c.font=`${tileW*.18}px serif`;c.globalAlpha=.75;c.fillText('᛭',0,-kh*.8+bh*.46);c.restore();
+  isoBanner(c, d, wallH, wallH * (.7 + level * .1), '#5a1888', '#e0b0ff');
 
-  if(sel)selBox(c,W,H,'#d07aff');
+  if (sel) selDiamond(c, d, wallH, '#d07aff');
 };
 
-// ============================================================
-// 2. MINE D'OR CORROMPU   (2×2)
-// ============================================================
-DRAW_FN.goldMine = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.85, H=tileH*sh*1.6;
-  dropShadow(c,W,tileH*sh*.4);
+// ───────────────────────────────────────────────────────────────────────────
+// 2. MINE D'OR  2×2
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.goldMine = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
 
-  // Portique bois
-  c.strokeStyle=P.wood;c.lineWidth=tileW*.06;
-  c.beginPath();c.moveTo(-W*.38,-H*.72);c.lineTo(0,-H);c.lineTo(W*.38,-H*.72);c.stroke();
-  c.beginPath();c.moveTo(-W*.28,-H*.52);c.lineTo(W*.28,-H*.52);c.stroke();
+  // Corps de mine (façade pierre brute)
+  drawFaceLeft( c, d, wallH, '#2a1c10');
+  drawFaceRight(c, d, wallH, '#1e1408');
+  drawRoof(c, d, '#302010', C.black);
 
-  // Arcade pierre
-  towerBody(c,W*.76,H*.68,'#2e2218','#1a140e');
-  // Ouverture
-  c.fillStyle='rgba(0,0,0,.85)';
-  rrect(c,-W*.22,-H*.62,W*.44,H*.55,tileW*.06);c.fill();
+  // Ouverture de mine sur la face gauche
+  const mx = d.left.x  + (d.bottom.x - d.left.x) * .5;
+  const my = d.left.y  + (d.bottom.y - d.left.y) * .5 + wallH * .15;
+  const mw = d.hw * .28, mh = wallH * .62;
+  c.save();
+  // Arche
+  c.fillStyle = 'rgba(0,0,0,.88)';
+  c.beginPath();
+  c.moveTo(mx - mw, my + mh);
+  c.lineTo(mx - mw, my + mh * .4);
+  c.arc(mx, my + mh * .4, mw, Math.PI, 0);
+  c.lineTo(mx + mw, my + mh);
+  c.closePath(); c.fill();
+  // Lueur or
+  c.shadowColor = C.gold; c.shadowBlur = 8 + f * 10;
+  c.fillStyle = `rgba(240,196,88,${.18 + f * .15})`;
+  c.beginPath(); c.arc(mx, my + mh * .55, mw * .6, 0, Math.PI * 2); c.fill();
+  c.shadowBlur = 0;
+  c.restore();
 
-  // Veine or
-  c.save();glowFill(c,P.gold,(7+f*9));
-  c.fillStyle=`rgba(240,196,88,${.22+f*.18})`;
-  rrect(c,-W*.22,-H*.62,W*.44,H*.55,tileW*.06);c.fill();noGlow(c);c.restore();
+  // Portique bois sur le toit
+  c.save();
+  c.strokeStyle = C.wood; c.lineWidth = tileW * .045;
+  c.beginPath();
+  c.moveTo(d.left.x,  d.left.y  - wallH * .05);
+  c.lineTo(d.top.x,   d.top.y   - wallH * .35);
+  c.lineTo(d.right.x, d.right.y - wallH * .05);
+  c.stroke();
+  c.restore();
 
-  // Chariot (Lv2+)
-  if(level>=2){
-    c.save();c.translate(-tileW*.04,-tileH*.1);
-    const cw=tileW*.22,ch=tileH*.28;
-    c.fillStyle='#5a4030';c.strokeStyle=P.black;c.lineWidth=1.5;
-    c.fillRect(-cw/2,-ch,cw,ch);c.strokeRect(-cw/2,-ch,cw,ch);
-    for(let i=0;i<3;i++){c.fillStyle=P.gold;c.beginPath();c.arc((-cw*.35+i*cw*.35),-ch*.5,tileW*.04,0,Math.PI*2);c.fill();}
-    for(const wx of[-cw*.35,cw*.35]){c.fillStyle=P.wood;c.beginPath();c.arc(wx,0,tileW*.06,0,Math.PI*2);c.fill();c.strokeStyle=P.black;c.lineWidth=1;c.stroke();}
-    c.restore();
+  // Chariot (Lv2)
+  if (level >= 2) {
+    const cartX = d.bottom.x + d.hw * .12;
+    const cartY = d.bottom.y + wallH * .3;
+    const cw = tileW * .18, ch = tileH * .3;
+    c.fillStyle = '#5a4030'; c.strokeStyle = C.black; c.lineWidth = 1.3;
+    c.fillRect(cartX - cw, cartY - ch, cw * 2, ch); c.strokeRect(cartX - cw, cartY - ch, cw * 2, ch);
+    for (const wx of [cartX - cw * .6, cartX + cw * .6]) {
+      c.fillStyle = C.wood; c.beginPath(); c.arc(wx, cartY, tileW * .055, 0, Math.PI * 2); c.fill(); c.stroke();
+    }
+    // paillettes d'or
+    for (let i = 0; i < 3; i++) {
+      c.fillStyle = C.gold; c.beginPath();
+      c.arc(cartX + (i - 1) * cw * .5, cartY - ch * .6, tileW * .03, 0, Math.PI * 2); c.fill();
+    }
   }
+
   // Pièce flottante (Lv3)
-  if(level>=3){const bob=Math.sin(t*2.1)*tileH*.12;orb(c,W*.36,-H*.82+bob,tileW*.07,P.gold,(9+f*7));}
-
-  if(sel)selBox(c,W,H,P.gold);
-};
-
-// ============================================================
-// 3. SCIERIE MAUDITE   (2×2)
-// ============================================================
-DRAW_FN.lumberMill = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.88, H=tileH*sh*1.5;
-  dropShadow(c,W,tileH*sh*.4);
-
-  // Pile de rondins
-  for(let i=0;i<3;i++){
-    c.fillStyle=`hsl(25,${40+i*8}%,${22+i*5}%)`;c.strokeStyle=P.black;c.lineWidth=1.2;
-    c.beginPath();c.ellipse(-W*.15+(i-1)*W*.18,-tileH*.15-i*tileH*.22,W*.19,tileH*.18,.15*(i-1),0,Math.PI*2);c.fill();c.stroke();
+  if (level >= 3) {
+    const bob = Math.sin(t * 2.1) * tileH * .15;
+    orb(c, d.top.x, d.top.y - wallH * .5 + bob, tileW * .07, C.gold, 10 + f * 8);
   }
 
-  // Cabanon
-  towerBody(c,W*.86,H*.52,'#342818','#1e180e');
+  if (sel) selDiamond(c, d, wallH, C.gold);
+};
 
-  // Toit incliné
-  poly(c,-W*.46,-H*.52, 0,-H, W*.46,-H*.52);
-  c.fillStyle='#3a2c1e';c.fill();c.strokeStyle=P.black;c.lineWidth=1.8;c.stroke();
-  c.save();c.globalAlpha=.14;c.strokeStyle='#000';c.lineWidth=.7;
-  for(let i=-2;i<=2;i++){c.beginPath();c.moveTo(i*W*.13,-H*.52);c.lineTo(i*W*.09,-H);c.stroke();}c.restore();
+// ───────────────────────────────────────────────────────────────────────────
+// 3. SCIERIE MAUDITE  2×2
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.lumberMill = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
 
-  // Lame de scie tournante (Lv2+)
-  if(level>=2){
-    const a=t*(level>=3?2.8:1.8);
-    const r=tileW*.18;
-    c.save();c.translate(W*.3,-H*.4);c.rotate(a);
-    c.fillStyle='#909090';c.strokeStyle=P.black;c.lineWidth=.8;
-    c.beginPath();c.arc(0,0,r,0,Math.PI*2);c.fill();c.stroke();
-    for(let i=0;i<10;i++){const a2=i/10*Math.PI*2;poly(c,Math.cos(a2)*r*.85,Math.sin(a2)*r*.85,Math.cos(a2+.26)*r*1.28,Math.sin(a2+.26)*r*1.28,Math.cos(a2+.12)*r*.85,Math.sin(a2+.12)*r*.85);c.fillStyle='#aaa';c.fill();}
+  drawFaceLeft( c, d, wallH, '#2a1c10');
+  drawFaceRight(c, d, wallH, '#1c1208');
+
+  // Toit en pente = losange + arête faitière
+  drawRoof(c, d, '#3a2410', C.black);
+  // Bande faitière
+  c.beginPath();
+  c.moveTo(d.top.x, d.top.y);
+  c.lineTo(d.right.x, d.right.y);
+  c.strokeStyle = '#5a3818'; c.lineWidth = tileW * .04; c.stroke();
+  c.beginPath();
+  c.moveTo(d.top.x, d.top.y);
+  c.lineTo(d.left.x, d.left.y);
+  c.strokeStyle = '#4a2c12'; c.lineWidth = tileW * .04; c.stroke();
+
+  // Rondins sur le toit
+  for (let i = 0; i < 3; i++) {
+    const ti = .2 + i * .22;
+    const lx = d.top.x + (d.left.x - d.top.x) * ti;
+    const ly = d.top.y + (d.left.y - d.top.y) * ti;
+    c.save(); c.strokeStyle = `hsl(22,${48+i*8}%,${22+i*4}%)`; c.lineWidth = tileH * .18;
+    c.beginPath(); c.moveTo(lx - tileW * .04, ly + tileH * .05); c.lineTo(lx + tileW * .22, ly + tileH * .15); c.stroke();
     c.restore();
   }
 
-  // Fumée maléfique (Lv3)
-  if(level>=3){c.save();c.globalAlpha=.28;
-    for(let i=0;i<3;i++){const bob2=Math.sin(t*1.4+i*1.2)*tileH*.15;
-      c.fillStyle='rgba(140,100,200,.5)';
-      c.beginPath();c.arc(-W*.06+(i-1)*W*.14,-H-tileH*.2+bob2,(tileW*.07+i*tileW*.04),0,Math.PI*2);c.fill();
-    }c.restore();
+  // Fenêtre face gauche
+  windowLeft(c, d, wallH, .4, '#bc8a50', f);
+
+  // Lame tournante (Lv2+)
+  if (level >= 2) {
+    const a = t * (level >= 3 ? 2.8 : 1.8);
+    const bx = d.right.x + (d.bottom.x - d.right.x) * .35;
+    const by = d.right.y + (d.bottom.y - d.right.y) * .35 + wallH * .25;
+    const r  = tileW * .14;
+    c.save(); c.translate(bx, by); c.rotate(a);
+    c.fillStyle = '#909090'; c.strokeStyle = C.black; c.lineWidth = .7;
+    c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.fill(); c.stroke();
+    for (let i = 0; i < 8; i++) {
+      const a2 = i / 8 * Math.PI * 2;
+      c.beginPath();
+      c.moveTo(Math.cos(a2) * r * .78, Math.sin(a2) * r * .78);
+      c.lineTo(Math.cos(a2 + .22) * r * 1.25, Math.sin(a2 + .22) * r * 1.25);
+      c.lineTo(Math.cos(a2 + .1)  * r * .78,  Math.sin(a2 + .1)  * r * .78);
+      c.fillStyle = '#bbb'; c.fill();
+    }
+    c.restore();
   }
-  if(sel)selBox(c,W,H,'#bc8a50');
+
+  // Fumée (Lv3)
+  if (level >= 3) {
+    for (let i = 0; i < 3; i++) {
+      const bob = ((t * 1.2 + i * 1.1) % 3) / 3;
+      c.save(); c.globalAlpha = .3 * (1 - bob);
+      c.fillStyle = 'rgba(140,100,200,.6)';
+      c.beginPath(); c.arc(d.top.x + (i - 1) * tileW * .08, d.top.y - wallH * .2 - bob * tileH * .8, tileW * (.04 + bob * .06), 0, Math.PI * 2); c.fill();
+      c.restore();
+    }
+  }
+
+  if (sel) selDiamond(c, d, wallH, '#bc8a50');
 };
 
-// ============================================================
-// 4. PUITS D'ÂMES   (2×2)
-// ============================================================
-DRAW_FN.essenceWell = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.8, H=tileH*sh*1.7;
-  dropShadow(c,W,tileH*sh*.35);
+// ───────────────────────────────────────────────────────────────────────────
+// 4. PUITS D'ÂMES  2×2
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.essenceWell = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
 
-  // Margelle cylindrique
-  c.fillStyle=P.stone1;c.strokeStyle=P.black;c.lineWidth=1.8;
-  c.beginPath();c.ellipse(0,-tileH*sh*.28,W*.42,W*.17,0,0,Math.PI*2);c.fill();c.stroke();
-  c.fillStyle='rgba(0,0,0,.88)';
-  c.beginPath();c.ellipse(0,-tileH*sh*.28,W*.25,W*.10,0,0,Math.PI*2);c.fill();
+  // Base cylindrique : faces iso
+  drawFaceLeft( c, d, wallH * .6, '#252030');
+  drawFaceRight(c, d, wallH * .6, '#1a1824');
 
-  // Corps de puits
-  towerBody(c,W*.84,tileH*sh*.3,'#2a1e30','#16121c');
+  // Toit = margelle du puits
+  drawRoof(c, d, '#2e2840', C.black);
+
+  // Ouverture sombre au centre du toit
+  const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+  const cy = d.top.y + (d.bottom.y - d.top.y) * .5;
+  c.save(); c.fillStyle = 'rgba(0,0,0,.9)';
+  c.beginPath(); c.ellipse(cx, cy, d.hw * .28, d.hh * .28, 0, 0, Math.PI * 2); c.fill();
+  c.restore();
+
+  // Brume d'âmes montante
+  for (let i = 0; i < 4; i++) {
+    const ph = t * 1.2 + i * 1.5, rise = (ph % 3) / 3;
+    c.save(); c.globalAlpha = .32 - rise * .28;
+    c.fillStyle = i % 2 ? '#b870ff' : '#7840df';
+    c.beginPath(); c.arc(cx + Math.sin(ph * 2 + i) * tileW * .06, cy - rise * wallH * 1.2,
+      (tileW * .04 + i * tileW * .02 + rise * tileW * .06), 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
 
   // Cadre bois
-  c.strokeStyle='#7a5030';c.lineWidth=tileW*.055;
-  c.beginPath();c.moveTo(-W*.38,-tileH*sh*.28);c.lineTo(-W*.34,-H);c.stroke();
-  c.beginPath();c.moveTo( W*.38,-tileH*sh*.28);c.lineTo( W*.34,-H);c.stroke();
-  c.strokeStyle='#5a3820';c.lineWidth=tileW*.07;
-  c.beginPath();c.moveTo(-W*.38,-H);c.lineTo(W*.38,-H);c.stroke();
-
-  // Brume d'âmes
-  for(let i=0;i<4;i++){
-    const phase=t*1.2+i*1.5;const rise=(phase%3)/3;
-    c.save();c.globalAlpha=.32-rise*.28;
-    c.fillStyle=i%2?'#b870ff':'#7840df';
-    c.beginPath();c.arc(Math.sin(phase*2.1+i)*tileW*.08,-tileH*sh*.28-rise*H*.65,(tileW*.06+i*tileW*.03+rise*tileW*.08),0,Math.PI*2);c.fill();
-    c.restore();
-  }
+  c.save(); c.strokeStyle = C.wood; c.lineWidth = tileW * .05;
+  c.beginPath(); c.moveTo(d.left.x, d.left.y); c.lineTo(d.top.x, d.top.y - wallH * .45); c.stroke();
+  c.beginPath(); c.moveTo(d.right.x, d.right.y); c.lineTo(d.top.x, d.top.y - wallH * .45); c.stroke();
+  c.strokeStyle = '#5a3820'; c.lineWidth = tileW * .065;
+  c.beginPath(); c.moveTo(d.left.x - tileW * .04, d.left.y - wallH * .01); c.lineTo(d.right.x + tileW * .04, d.right.y - wallH * .01); c.stroke();
+  c.restore();
 
   // Seau (Lv2+)
-  if(level>=2){const bob=Math.sin(t*1.8)*tileH*.12;
-    c.save();c.translate(0,-H*.5+bob);
-    rrect(c,-tileW*.08,-tileH*.15,tileW*.16,tileH*.18,tileW*.03);c.fillStyle='#5a4030';c.fill();c.strokeStyle=P.black;c.lineWidth=1.2;c.stroke();
-    orb(c,0,-tileH*.06,tileW*.05,'#b870ff',(7+f*5));c.restore();
+  if (level >= 2) {
+    const bob = Math.sin(t * 1.8) * tileH * .1;
+    c.fillStyle = '#5a4030'; c.strokeStyle = C.black; c.lineWidth = 1.2;
+    c.fillRect(cx - tileW * .07, cy - wallH * .55 + bob - tileH * .12, tileW * .14, tileH * .2);
+    c.strokeRect(cx - tileW * .07, cy - wallH * .55 + bob - tileH * .12, tileW * .14, tileH * .2);
+    orb(c, cx, cy - wallH * .55 + bob, tileW * .045, '#b870ff', 7 + f * 5);
   }
 
   // Orbes orbitaux (Lv3)
-  if(level>=3){const a=t*1.2;const rx=W*.38,ry=W*.15;
-    orb(c,rx*Math.cos(a),-H*.4+ry*Math.sin(a),tileW*.045,'#e0b0ff',(9+f*7));
-    orb(c,rx*Math.cos(a+Math.PI),-H*.4+ry*Math.sin(a+Math.PI),tileW*.045,'#b060ff',(7+f*5));
+  if (level >= 3) {
+    const a = t * 1.2;
+    orb(c, cx + d.hw * .3 * Math.cos(a),     cy - wallH * .4 + d.hh * .12 * Math.sin(a),     tileW * .04, '#e0b0ff', 9 + f * 7);
+    orb(c, cx + d.hw * .3 * Math.cos(a + Math.PI), cy - wallH * .4 + d.hh * .12 * Math.sin(a + Math.PI), tileW * .04, '#b060ff', 7 + f * 5);
   }
-  if(sel)selBox(c,W,H,'#b982ff');
+
+  if (sel) selDiamond(c, d, wallH, '#b982ff');
 };
 
-// ============================================================
-// 5. CAVEAU D'ÂMES   (2×2)
-// ============================================================
-DRAW_FN.soulVault = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.9, H=tileH*sh*1.75;
-  dropShadow(c,W,tileH*sh*.4);
+// ───────────────────────────────────────────────────────────────────────────
+// 5. CAVEAU D'ÂMES  2×2
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.soulVault = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
 
-  towerBody(c,W*.86,H*.68,'#2c2240','#18152a');
+  drawFaceLeft( c, d, wallH, '#20183a');
+  drawFaceRight(c, d, wallH, '#16102c');
+  drawRoof(c, d, '#2c2248', C.black);
 
-  // Arche de porte
-  const dw=W*.38,dh=H*.42;
-  c.fillStyle='rgba(0,0,0,.88)';
-  c.beginPath();c.moveTo(-dw/2,0);c.lineTo(-dw/2,-dh*.62);
-  c.arc(0,-dh*.62,dw/2,Math.PI,0);c.lineTo(dw/2,0);c.closePath();c.fill();
-  c.strokeStyle='#5a4870';c.lineWidth=tileW*.04;c.stroke();
-
-  // Halo intérieur
-  c.save();glowFill(c,'#8b62cf',(11+f*13));
-  c.fillStyle=`rgba(139,98,207,${.16+f*.12})`;
-  c.beginPath();c.arc(0,-H*.36,W*.18,0,Math.PI*2);c.fill();noGlow(c);c.restore();
-
-  // Toit en gradins
-  const steps=1+level;
-  for(let i=0;i<steps;i++){
-    const bw2=W*.86*(1-i/(steps+1)),topY=-H*.68-i*tileH*.2;
-    c.fillStyle=`hsl(265,${28+i*8}%,${17+i*5}%)`;c.strokeStyle=P.black;c.lineWidth=1.2;
-    c.fillRect(-bw2/2,topY-tileH*.16,bw2,tileH*.16);c.strokeRect(-bw2/2,topY-tileH*.16,bw2,tileH*.16);
-  }
-  orb(c,0,-H*.68-steps*tileH*.2-tileH*.1,(3+level)*tileW*.03,'#8b62cf',(12+f*11));
-
-  if(level>=2){
-    c.save();c.globalAlpha=.45;c.strokeStyle='#5a4870';c.lineWidth=tileW*.022;
-    for(let i=0;i<5;i++){const y=-H*.56+i*tileH*.22;const ox=W*.46+Math.sin(t*.8+i)*.4;c.beginPath();c.arc(ox,y,tileW*.025,0,Math.PI*2);c.stroke();c.beginPath();c.arc(-ox,y,tileW*.025,0,Math.PI*2);c.stroke();}
-    c.restore();
-  }
-  if(sel)selBox(c,W,H,'#8b62cf');
-};
-
-// ============================================================
-// 6. CASERNE MAUDITE   (2×2)
-// ============================================================
-DRAW_FN.barracks = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.9, H=tileH*sh*1.65;
-  dropShadow(c,W,tileH*sh*.4);
-
-  towerBody(c,W*.88,H*.65,'#3a2828','#221818');
-  battlements(c,W*.88,-H*.65,W*.16,tileH*.28,'#482e2e');
-
-  for(const sx of[-1,1]){
-    c.save();c.translate(sx*W*.35,0);
-    towerBody(c,W*.22,H*.52,'#402a2a','#281818');
-    battlements(c,W*.22,-H*.52,W*.10,tileH*.22,'#502e2e');
+  // Toit en gradins (stepped pyramid)
+  const steps = 1 + level;
+  for (let i = 1; i <= steps; i++) {
+    const r = 1 - i / (steps + 1);
+    const sd = diamond(iso.sw * r, iso.sh * r, tileW, tileH);
+    const off = -wallH * .06 * i;
+    c.save(); c.translate(0, off);
+    drawRoof(c, sd, `hsl(265,${26+i*7}%,${17+i*5}%)`, C.black);
     c.restore();
   }
 
-  // Portail en arc
-  c.fillStyle='rgba(0,0,0,.9)';
-  c.beginPath();c.arc(0,0,W*.19,Math.PI,0);c.lineTo(W*.19,0);c.lineTo(-W*.19,0);c.closePath();c.fill();
-  c.strokeStyle='#6a3030';c.lineWidth=tileW*.035;c.stroke();
-  c.save();glowFill(c,P.blood,(7+f*9));
-  c.fillStyle=`rgba(216,72,88,${.12+f*.1})`;
-  c.beginPath();c.arc(0,-tileH*.1,W*.13,0,Math.PI*2);c.fill();noGlow(c);c.restore();
+  // Capstone
+  const capY = d.top.y - wallH * .06 * steps - wallH * .12;
+  orb(c, d.top.x, capY, tileW * .055, '#8b62cf', 13 + f * 11);
 
-  if(level>=2){c.fillStyle=P.bone;c.textAlign='center';c.textBaseline='middle';
-    c.font=`${tileW*.22}px serif`;c.fillText('☠',0,-tileH*.15);}
+  // Porte arquée sur la face gauche
+  const px = d.left.x  + (d.bottom.x - d.left.x) * .5;
+  const py = d.left.y  + (d.bottom.y - d.left.y) * .5 + wallH * .12;
+  const pw = d.hw * .22, ph = wallH * .6;
+  c.fillStyle = 'rgba(0,0,0,.88)';
+  c.beginPath();
+  c.moveTo(px - pw, py + ph); c.lineTo(px - pw, py + ph * .42);
+  c.arc(px, py + ph * .42, pw, Math.PI, 0);
+  c.lineTo(px + pw, py + ph); c.closePath(); c.fill();
+  c.strokeStyle = '#5a4870'; c.lineWidth = tileW * .03; c.stroke();
+  // halo int
+  c.save(); c.shadowColor = '#8b62cf'; c.shadowBlur = 10 + f * 12;
+  c.fillStyle = `rgba(139,98,207,${.15 + f * .12})`;
+  c.beginPath(); c.arc(px, py + ph * .62, pw * .5, 0, Math.PI * 2); c.fill();
+  c.shadowBlur = 0; c.restore();
 
-  if(level>=3){c.save();c.globalAlpha=.6;c.fillStyle='#c03040';
-    for(let i=0;i<4;i++){const drip=(t*22+i*14)%(H*.62);c.beginPath();c.arc((-W*.28+i*W*.18),-H*.65+drip,tileW*.025,0,Math.PI*2);c.fill();}c.restore();}
+  if (level >= 2) torchOnEdge(c, d, wallH, .72, 'L', f, '#8b62cf');
 
-  torch(c,-W*.48,-H*.38,tileW*.07,f,P.blood);
-  torch(c, W*.48,-H*.38,tileW*.07,f,P.blood);
-  windowSlit(c,0,-H*.52,tileW*.1,tileH*.38,P.blood,f);
-  if(sel)selBox(c,W,H,P.blood);
+  if (sel) selDiamond(c, d, wallH, '#8b62cf');
 };
 
-// ============================================================
-// 7. BRASIER RITUEL   (2×2)
-// ============================================================
-DRAW_FN.campfire = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.8, H=tileH*sh*1.4;
-  dropShadow(c,W,tileH*sh*.35);
+// ───────────────────────────────────────────────────────────────────────────
+// 6. CASERNE MAUDITE  2×2
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.barracks = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
 
-  // Cercle de pierres
-  c.fillStyle=P.stone1;c.strokeStyle=P.black;c.lineWidth=1.6;
-  c.beginPath();c.ellipse(0,-tileH*.12,W*.44,W*.18,0,0,Math.PI*2);c.fill();c.stroke();
+  drawFaceLeft( c, d, wallH, '#2e1e1e');
+  drawFaceRight(c, d, wallH, '#1e1414');
+  drawRoof(c, d, '#3a2828', C.black);
+
+  crenelsLeft( c, d, 6, wallH * .2, '#482e2e');
+  crenelsRight(c, d, 6, wallH * .2, '#482e2e');
+
+  // Portail arqué sur la face droite
+  const gx = d.right.x + (d.bottom.x - d.right.x) * .45;
+  const gy = d.right.y + (d.bottom.y - d.right.y) * .45 + wallH * .1;
+  const gw = d.hw * .18, gh = wallH * .65;
+  c.fillStyle = 'rgba(0,0,0,.9)';
+  c.beginPath();
+  c.moveTo(gx - gw, gy + gh); c.lineTo(gx - gw, gy + gh * .38);
+  c.arc(gx, gy + gh * .38, gw, Math.PI, 0);
+  c.lineTo(gx + gw, gy + gh); c.closePath(); c.fill();
+  c.strokeStyle = '#6a3030'; c.lineWidth = tileW * .03; c.stroke();
+  c.save(); c.shadowColor = C.blood; c.shadowBlur = 7 + f * 9;
+  c.fillStyle = `rgba(216,72,88,${.12 + f * .1})`;
+  c.beginPath(); c.arc(gx, gy + gh * .55, gw * .55, 0, Math.PI * 2); c.fill();
+  c.shadowBlur = 0; c.restore();
+
+  if (level >= 2) {
+    c.fillStyle = C.bone; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.font = `${tileW * .2}px serif`;
+    c.fillText('☠', gx, gy + gh * .48);
+  }
+
+  if (level >= 3) {
+    c.save(); c.globalAlpha = .55; c.fillStyle = '#c03040';
+    for (let i = 0; i < 4; i++) {
+      const drip = (t * 24 + i * 12) % (wallH * .9);
+      c.beginPath(); c.arc(d.left.x + (d.bottom.x - d.left.x) * (.15 + i * .2), d.left.y + (d.bottom.y - d.left.y) * (.15 + i * .2) + drip, tileW * .02, 0, Math.PI * 2); c.fill();
+    }
+    c.restore();
+  }
+
+  torchOnEdge(c, d, wallH, .22, 'L', f, C.blood);
+  torchOnEdge(c, d, wallH, .22, 'R', f, C.blood);
+  windowLeft(c, d, wallH, .6, C.blood, f);
+
+  if (sel) selDiamond(c, d, wallH, C.blood);
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// 7. BRASIER RITUEL  2×2
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.campfire = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
+
+  // Cercle de pierres (plat sur le losange)
+  drawRoof(c, d, '#1e1828', C.black);
+
+  // Pierres individuelles sur le bord du toit
+  c.fillStyle = C.stone2; c.strokeStyle = C.black; c.lineWidth = 1;
+  for (let i = 0; i < 8; i++) {
+    const ti = i / 8;
+    const px = d.top.x + (d.right.x - d.top.x) * (ti < .5 ? ti * 2 : 0)
+              + (d.left.x + (d.bottom.x - d.left.x) * Math.max(0, ti * 2 - 1)) * (ti >= .5 ? 1 : 0);
+    // simpler: lerp around all 4 edges
+    let ex, ey;
+    if (ti < .25)      { const r = ti / .25; ex = d.top.x + (d.right.x - d.top.x) * r; ey = d.top.y + (d.right.y - d.top.y) * r; }
+    else if (ti < .5)  { const r = (ti - .25) / .25; ex = d.right.x + (d.bottom.x - d.right.x) * r; ey = d.right.y + (d.bottom.y - d.right.y) * r; }
+    else if (ti < .75) { const r = (ti - .5) / .25; ex = d.bottom.x + (d.left.x - d.bottom.x) * r; ey = d.bottom.y + (d.left.y - d.bottom.y) * r; }
+    else               { const r = (ti - .75) / .25; ex = d.left.x + (d.top.x - d.left.x) * r; ey = d.left.y + (d.top.y - d.left.y) * r; }
+    c.beginPath(); c.ellipse(ex, ey, tileW * .05, tileH * .05, 0, 0, Math.PI * 2); c.fill(); c.stroke();
+  }
 
   // Bûches
-  c.strokeStyle='#6a3818';c.lineWidth=tileW*.08;
-  [-.45,.45,Math.PI/2].forEach(a=>{
-    c.beginPath();c.moveTo(Math.cos(a)*W*.28,-tileH*.12+Math.sin(a)*W*.11);
-    c.lineTo(-Math.cos(a)*W*.28,-tileH*.12-Math.sin(a)*W*.11);c.stroke();
+  const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+  const cy = d.top.y + (d.bottom.y - d.top.y) * .5;
+  c.save(); c.strokeStyle = '#6a3818'; c.lineWidth = tileW * .07;
+  [-.45, .45, Math.PI / 2].forEach(a => {
+    c.beginPath();
+    c.moveTo(cx + Math.cos(a) * d.hw * .28, cy + Math.sin(a) * d.hh * .28);
+    c.lineTo(cx - Math.cos(a) * d.hw * .28, cy - Math.sin(a) * d.hh * .28);
+    c.stroke();
   });
+  c.restore();
 
-  // Flammes multi-couches
-  const layers=[
-    {fw:W*.18,fh:H*.5,col:'#e03010',a:.7},
-    {fw:W*.13,fh:H*.64,col:'#f07820',a:.82},
-    {fw:W*.09,fh:H*.72,col:'#f8c040',a:.9},
-    {fw:W*.05,fh:H*.62,col:'#ffffc0',a:.96},
+  // Flammes
+  const fh = wallH * 1.2;
+  const layers = [
+    { w: d.hw * .14, h: fh * .55, col: '#e03010', a: .72 },
+    { w: d.hw * .10, h: fh * .7,  col: '#f07820', a: .84 },
+    { w: d.hw * .07, h: fh * .78, col: '#f8c040', a: .92 },
+    { w: d.hw * .04, h: fh * .68, col: '#ffffc0', a: .97 },
   ];
-  layers.forEach(({fw,fh,col,a})=>{
-    const sw2=Math.sin(t*3.2+(a*10))*tileW*.04;
-    c.save();c.globalAlpha=a;glowFill(c,col,(9+f*11));
-    c.fillStyle=col;
-    c.beginPath();c.moveTo(-fw/2+sw2,-tileH*.12);
-    c.bezierCurveTo(-fw/2+sw2,-tileH*.12-fh*.4,sw2-fw*.3,-tileH*.12-fh*.8,sw2,-tileH*.12-fh);
-    c.bezierCurveTo(sw2+fw*.3,-tileH*.12-fh*.8,fw/2+sw2,-tileH*.12-fh*.4,fw/2+sw2,-tileH*.12);
-    c.closePath();c.fill();noGlow(c);c.restore();
+  layers.forEach(({ w, h, col, a }) => {
+    const sw2 = Math.sin(t * 3.2 + a * 10) * d.hw * .035;
+    c.save(); c.globalAlpha = a;
+    c.shadowColor = col; c.shadowBlur = 8 + f * 11;
+    c.fillStyle = col;
+    c.beginPath();
+    c.moveTo(cx - w + sw2, cy);
+    c.bezierCurveTo(cx - w + sw2, cy - h * .4, cx + sw2 - w * .3, cy - h * .85, cx + sw2, cy - h);
+    c.bezierCurveTo(cx + sw2 + w * .3, cy - h * .85, cx + w + sw2, cy - h * .4, cx + w + sw2, cy);
+    c.closePath(); c.fill(); c.shadowBlur = 0; c.restore();
   });
 
-  if(level>=2)for(let i=0;i<2;i++){
-    const ox=(i*2-1)*W*.28,ff=Math.sin(t*2.8+i*2)*.5+.5;
-    c.save();c.globalAlpha=.7;glowFill(c,'#f07820',(7+ff*7));
-    c.fillStyle='#f07820';
-    c.beginPath();c.ellipse(ox,-tileH*.12-(tileH*.25+ff*tileH*.22),(tileW*.05+ff*tileW*.025),(tileH*.22+ff*tileH*.11),0,0,Math.PI*2);c.fill();noGlow(c);c.restore();
+  if (level >= 2) {
+    for (let i = 0; i < 2; i++) {
+      const ox = (i * 2 - 1) * d.hw * .38;
+      const ff = Math.sin(t * 2.8 + i * 2) * .5 + .5;
+      c.save(); c.globalAlpha = .68;
+      c.shadowColor = '#f07820'; c.shadowBlur = 6 + ff * 7;
+      c.fillStyle = '#f07820';
+      c.beginPath(); c.ellipse(cx + ox, cy - fh * (.22 + ff * .2), d.hw * (.04 + ff * .02), fh * (.18 + ff * .1), 0, 0, Math.PI * 2); c.fill();
+      c.shadowBlur = 0; c.restore();
+    }
   }
 
-  if(level>=3){c.textAlign='center';c.textBaseline='middle';c.font=`${tileW*.14}px serif`;
-    for(let i=0;i<3;i++){const a2=t*1.8+i*2.1;c.save();c.globalAlpha=.42+Math.sin(a2)*.18;
-      c.fillText('💀',Math.cos(a2)*tileW*.18,-H*.5+Math.sin(a2)*tileH*.1);c.restore();}}
-
-  if(sel)selBox(c,W,H,P.green);
+  if (sel) selDiamond(c, d, 0, C.green);
 };
 
-// ============================================================
-// 8. CHÂTEAU DE CLAN   (3×3)
-// ============================================================
-DRAW_FN.clanCastle = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.9, H=tileH*sh*1.9;
-  dropShadow(c,W,tileH*sh*.5);
+// ───────────────────────────────────────────────────────────────────────────
+// 8. CHÂTEAU DE CLAN  3×3
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.clanCastle = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
 
-  // Courtine basse
-  c.fillStyle=P.stone1;c.strokeStyle=P.black;c.lineWidth=1.8;
-  c.fillRect(-W*.5,-tileH*.2,W,tileH*.22);c.strokeRect(-W*.5,-tileH*.2,W,tileH*.22);
+  drawFaceLeft( c, d, wallH, '#2a1e40');
+  drawFaceRight(c, d, wallH, '#1e1630');
+  drawRoof(c, d, '#362852', C.black);
 
-  // Tours latérales
-  for(const sx of[-1,1]){
-    c.save();c.translate(sx*W*.34,0);
-    towerBody(c,W*.24,H*.58,'#362844','#221a30');
-    battlements(c,W*.24,-H*.58,W*.11,tileH*.22,'#402e52');
-    windowSlit(c,0,-H*.36,tileW*.07,tileH*.3,'#c080f0',f);
-    c.restore();
-  }
+  const cH = wallH * .2;
+  crenelsLeft( c, d, 8, cH, '#402e62');
+  crenelsRight(c, d, 8, cH, '#402e62');
 
-  // Tour centrale
-  towerBody(c,W*.36,H*.78,'#3e2c52','#261e38');
-  battlements(c,W*.36,-H*.78,W*.13,tileH*.28,'#4e3862');
-
-  // Herse
-  c.fillStyle='rgba(0,0,0,.86)';
-  c.beginPath();c.arc(0,0,W*.14,Math.PI,0);c.lineTo(W*.14,0);c.lineTo(-W*.14,0);c.closePath();c.fill();
-  c.save();c.globalAlpha=.5;c.strokeStyle='#6a5080';c.lineWidth=tileW*.022;
-  for(let i=-2;i<=2;i++){c.beginPath();c.moveTo(i*W*.048,0);c.lineTo(i*W*.048,-W*.14);c.stroke();}c.restore();
+  // Spire centrale
+  isoSpire(c, iso, wallH, wallH * (1.2 + level * .18), '#3a1a60', '#d3a6ff', f);
 
   // Bannière
-  const bh=tileH*(1+level*.12);
-  poly(c,-tileW*.13,-H*.74, tileW*.13,-H*.74, tileW*.13,-H*.74+bh*.82, 0,-H*.74+bh, -tileW*.13,-H*.74+bh*.82);
-  c.fillStyle='#60209a';c.fill();c.strokeStyle=P.black;c.lineWidth=1.5;c.stroke();
-  c.save();c.fillStyle='#e0b0ff';c.textAlign='center';c.textBaseline='middle';
-  c.font=`${tileW*.15}px serif`;c.globalAlpha=.75;c.fillText('᛭',0,-H*.74+bh*.46);c.restore();
+  isoBanner(c, d, wallH, wallH * (.6 + level * .1), '#60209a', '#e0b0ff');
 
-  // Spire
-  c.save();glowFill(c,'#d3a6ff',(13+f*11));spire(c,W*.28,-H*.78,-H-tileH*.4,'#3a1a60');noGlow(c);c.restore();
-  orb(c,0,-H-tileH*.38,tileW*.055,'#d3a6ff',(14+f*11));
+  // Fenêtres
+  windowLeft(c, d, wallH, .35, '#c080f0', f);
+  windowLeft(c, d, wallH, .65, '#c080f0', f);
 
-  if(level>=2)for(const sx of[-1,1]){
-    c.save();c.translate(sx*W*.34,0);
-    c.save();glowFill(c,'#b080e0',7);spire(c,W*.2,-H*.58,-H*.58-tileH*.22,'#2a1848');noGlow(c);c.restore();
+  // Torches
+  torchOnEdge(c, d, wallH, .18, 'L', f, '#c080f0');
+  torchOnEdge(c, d, wallH, .18, 'R', f, '#c080f0');
+
+  if (level >= 2) {
+    // 2 spires aux coins gauche/droite
+    const sdm = diamond(1.2, 1.2, tileW, tileH);
+    c.save(); c.translate(d.left.x, d.left.y);
+    isoSpire(c, { ...iso, d: sdm }, 0, wallH * .7, '#2a1848', '#b080e0', f * .7); c.restore();
+    c.save(); c.translate(d.right.x, d.right.y);
+    isoSpire(c, { ...iso, d: sdm }, 0, wallH * .7, '#2a1848', '#b080e0', f * .7); c.restore();
+  }
+
+  if (level >= 3) {
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * Math.PI * 2 + t * .4;
+      const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+      const cy = d.top.y + (d.bottom.y - d.top.y) * .5 - wallH * 1.1;
+      orb(c, cx + d.hw * .3 * Math.cos(a), cy + d.hh * .12 * Math.sin(a), tileW * .035, '#d3a6ff', 9 + f * 7);
+    }
+  }
+
+  if (sel) selDiamond(c, d, wallH, '#d3a6ff');
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// 9. TOUR RUNIQUE  1×1
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.runeTower = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
+
+  // Tour étroite centrée sur le losange 1×1
+  drawFaceLeft( c, d, wallH, '#1e1a32');
+  drawFaceRight(c, d, wallH, '#16122a');
+  drawRoof(c, d, '#282042', C.black);
+
+  // Créneaux
+  crenelsLeft( c, d, 4, wallH * .25, '#30284e');
+  crenelsRight(c, d, 4, wallH * .25, '#30284e');
+
+  // Runes gravées sur la face gauche
+  c.save(); c.globalAlpha = .28 + f * .14; c.fillStyle = '#c070ff';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = `${tileW * .22}px serif`;
+  ['ᚱ', 'ᚢ', 'ᚾ'].forEach((r, i) => {
+    const ti = .2 + i * .25;
+    const rx = d.left.x + (d.bottom.x - d.left.x) * ti;
+    const ry = d.left.y + (d.bottom.y - d.left.y) * ti + wallH * .5;
+    c.fillText(r, rx, ry);
+  });
+  c.restore();
+
+  // Spire avec anneau d'orbes
+  isoSpire(c, iso, wallH, wallH * (1.6 + level * .22), '#20183c', '#c870ff', f);
+
+  // Orbes rotatifs
+  const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+  const cy = d.top.y + (d.bottom.y - d.top.y) * .5 - wallH * 1.0;
+  for (let i = 0; i < 3 + level; i++) {
+    const a = i / (3 + level) * Math.PI * 2 + t * .9;
+    orb(c, cx + d.hw * .45 * Math.cos(a), cy + d.hh * .2 * Math.sin(a), tileW * .04, '#c070ff', 7 + f * 7);
+  }
+
+  if (level >= 3 && Math.sin(t * 4) > .7) {
+    c.save(); c.globalAlpha = .55; c.strokeStyle = '#e0b0ff'; c.lineWidth = tileW * .02;
+    for (let i = 0; i < 3; i++) {
+      const a = i / 3 * Math.PI * 2 + t * 2;
+      c.beginPath(); c.moveTo(cx, cy);
+      c.lineTo(cx + Math.cos(a) * d.hw * .7, cy + Math.sin(a) * d.hh * .35); c.stroke();
+    }
     c.restore();
   }
 
-  if(level>=3)for(let i=0;i<8;i++){
-    const a=i/8*Math.PI*2+t*.4;
-    orb(c,W*.26*Math.cos(a),-H-tileH*.06+W*.1*Math.sin(a),tileW*.035,'#d3a6ff',(9+f*7));
-  }
-
-  torch(c,-W*.52,-H*.32,tileW*.075,f,'#c080f0');
-  torch(c, W*.52,-H*.32,tileW*.075,f,'#c080f0');
-  if(sel)selBox(c,W,H,'#d3a6ff');
+  windowLeft(c, d, wallH, .5, '#c870ff', f);
+  if (sel) selDiamond(c, d, wallH, '#c870ff');
 };
 
-// ============================================================
-// 9. TOUR RUNIQUE   (1×1)
-// ============================================================
-DRAW_FN.runeTower = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.8, H=tileH*sh*3.2;
-  dropShadow(c,W,tileH*sh*.4);
+// ───────────────────────────────────────────────────────────────────────────
+// 10. CATAPULTE D'OSSEMENTS  2×2
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.boneCatapult = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
 
-  // Socle octogonal
-  const nb=8,rb=W*.52;
-  c.beginPath();
-  for(let i=0;i<nb;i++){const a=i/nb*Math.PI*2;i===0?c.moveTo(rb*Math.cos(a),rb*Math.sin(a)*.4+tileH*.06):c.lineTo(rb*Math.cos(a),rb*Math.sin(a)*.4+tileH*.06);}
-  c.closePath();c.fillStyle=P.stone2;c.fill();c.strokeStyle=P.black;c.lineWidth=1.6;c.stroke();
+  // Plateforme basse
+  drawFaceLeft( c, d, wallH * .3, '#2e2010');
+  drawFaceRight(c, d, wallH * .3, '#201608');
+  drawRoof(c, d, '#382818', C.black);
 
-  // Corps
-  towerBody(c,W*.68,H*.76,'#262038','#161028');
-
-  // Runes gravées
-  c.save();c.globalAlpha=.25+f*.14;c.fillStyle='#c070ff';c.textAlign='center';c.textBaseline='middle';
-  c.font=`${tileW*.18}px serif`;
-  ['ᚱ','ᚢ','ᚾ','ᚦ'].forEach((r,i)=>c.fillText(r,0,-H*.22-i*H*.14));
+  // Châssis central
+  const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+  const cy = d.top.y + (d.bottom.y - d.top.y) * .5;
+  c.save(); c.strokeStyle = '#7a5030'; c.lineWidth = tileW * .065;
+  c.beginPath(); c.moveTo(d.left.x, d.left.y + wallH * .28); c.lineTo(cx, cy - wallH * .08); c.stroke();
+  c.beginPath(); c.moveTo(d.right.x, d.right.y + wallH * .28); c.lineTo(cx, cy - wallH * .08); c.stroke();
+  c.beginPath(); c.moveTo(d.left.x, d.left.y + wallH * .28); c.lineTo(d.right.x, d.right.y + wallH * .28); c.stroke();
   c.restore();
-
-  // Créneaux
-  battlements(c,W*.68,-H*.76,W*.3,tileH*.25,'#302648');
-
-  // Anneau d'orbes rotatif
-  for(let i=0;i<(3+level);i++){
-    const a=i/(3+level)*Math.PI*2+t*.8;
-    c.save();glowFill(c,'#c070ff',(7+f*7));
-    c.fillStyle='#c070ff';
-    c.beginPath();c.arc(W*.3*Math.cos(a),-H*.78+W*.12*Math.sin(a),(2.2+level*.4)*tileW*.022,0,Math.PI*2);c.fill();
-    noGlow(c);c.restore();
-  }
-  orb(c,0,-H*.82,(5+level)*tileW*.028,'#c870ff',(14+f*16));
-
-  if(level>=2)for(let i=0;i<6;i++){
-    const a=i/6*Math.PI*2-t*.6;
-    orb(c,W*.22*Math.cos(a),-H*.96+W*.08*Math.sin(a),tileW*.018,'#9040d0',(5+f*4));
-  }
-
-  if(level>=3&&Math.sin(t*4)>.7){
-    c.save();c.globalAlpha=.55;c.strokeStyle='#e0b0ff';c.lineWidth=tileW*.02;
-    for(let i=0;i<3;i++){const a=i/3*Math.PI*2+t*2;
-      c.beginPath();c.moveTo(0,-H*.82);c.lineTo(Math.cos(a)*W*.62,-H*.82+Math.sin(a)*W*.3);c.stroke();}c.restore();
-  }
-
-  windowSlit(c,0,-H*.5,tileW*.07,tileH*.28,'#c870ff',f);
-  if(sel)selBox(c,W,H,'#c870ff');
-};
-
-// ============================================================
-// 10. CATAPULTE D'OSSEMENTS   (2×2)
-// ============================================================
-DRAW_FN.boneCatapult = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.9, H=tileH*sh*1.6;
-  dropShadow(c,W,tileH*sh*.4);
-
-  // Plateforme
-  c.fillStyle='#3e2e20';c.strokeStyle=P.black;c.lineWidth=1.8;
-  c.fillRect(-W*.48,-tileH*.15,W*.96,tileH*.16);c.strokeRect(-W*.48,-tileH*.15,W*.96,tileH*.16);
-
-  // Roues
-  for(const wx of[-W*.3,W*.3]){
-    c.fillStyle='#5a3a20';c.beginPath();c.arc(wx,0,tileW*.12,0,Math.PI*2);c.fill();
-    c.strokeStyle=P.black;c.lineWidth=1.4;c.stroke();
-    c.fillStyle='#3a2010';c.beginPath();c.arc(wx,0,tileW*.06,0,Math.PI*2);c.fill();
-    c.strokeStyle='#8a6040';c.lineWidth=tileW*.022;
-    for(let i=0;i<6;i++){const a=i/6*Math.PI*2+t*.3;c.beginPath();c.moveTo(wx,0);c.lineTo(wx+Math.cos(a)*tileW*.11,Math.sin(a)*tileW*.11);c.stroke();}
-  }
-
-  // Châssis
-  c.strokeStyle='#7a5030';c.lineWidth=tileW*.07;
-  c.beginPath();c.moveTo(-W*.22,-tileH*.14);c.lineTo(-W*.18,-H*.58);c.stroke();
-  c.beginPath();c.moveTo( W*.22,-tileH*.14);c.lineTo( W*.18,-H*.58);c.stroke();
-  c.beginPath();c.moveTo(-W*.2,-H*.58);c.lineTo(W*.2,-H*.58);c.stroke();
 
   // Bras pivotant
-  const armA=-Math.PI*.5+Math.sin(t*.9)*(level>=2?.28:.18);
-  c.save();c.translate(0,-H*.28);c.rotate(armA);
-  c.strokeStyle='#8a5028';c.lineWidth=tileW*.07;
-  c.beginPath();c.moveTo(0,0);c.lineTo(0,-H*.44);c.stroke();
+  const armA = -Math.PI * .5 + Math.sin(t * .9) * (level >= 2 ? .3 : .18);
+  c.save(); c.translate(cx, cy - wallH * .08);
+  c.rotate(armA);
+  c.strokeStyle = '#8a5028'; c.lineWidth = tileW * .07;
+  c.beginPath(); c.moveTo(0, 0); c.lineTo(0, -wallH * .9); c.stroke();
   // Seau
-  c.fillStyle=P.bone;c.strokeStyle=P.black;c.lineWidth=1.3;
-  c.beginPath();c.arc(0,-H*.45,tileW*.1,0,Math.PI*2);c.fill();c.stroke();
-  for(let i=0;i<3;i++){const a=i/3*Math.PI*2;
-    c.fillStyle='#e0d0b0';c.beginPath();c.arc(Math.cos(a)*tileW*.06,-H*.45+Math.sin(a)*tileW*.06,tileW*.028,0,Math.PI*2);c.fill();}
+  c.fillStyle = C.bone; c.strokeStyle = C.black; c.lineWidth = 1.2;
+  c.beginPath(); c.arc(0, -wallH * .92, tileW * .1, 0, Math.PI * 2); c.fill(); c.stroke();
   c.restore();
 
-  if(level>=3) orb(c,0,-H*.58,tileW*.06,'#ff9840',(11+f*9));
-
-  if(sel)selBox(c,W,H,'#d66c5f');
-};
-
-// ============================================================
-// 11. FLÈCHE DES ÂMES   (1×1)
-// ============================================================
-DRAW_FN.soulSpire = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.7, H=tileH*sh*3.4;
-  dropShadow(c,W,tileH*sh*.35);
-
-  // Corps élancé
-  towerBody(c,W*.64,H*.72,'#1e2840','#101830');
-
-  // Contreforts
-  for(const sx of[-1,1]){
-    c.save();c.translate(sx*W*.32,0);
-    c.fillStyle='#181c2c';c.strokeStyle=P.black;c.lineWidth=1.3;
-    poly(c,0,0,sx*W*.24,0,sx*W*.08,-H*.22,0,-H*.22);
-    c.fill();c.stroke();c.restore();
+  // Roues (sur les façades)
+  for (const [wx, wy] of [[d.left.x, d.left.y + wallH * .28], [d.right.x, d.right.y + wallH * .28]]) {
+    c.fillStyle = '#5a3a20'; c.beginPath(); c.arc(wx, wy, tileW * .1, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = C.black; c.lineWidth = 1.3; c.stroke();
+    c.fillStyle = '#3a2010'; c.beginPath(); c.arc(wx, wy, tileW * .05, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#8a6040'; c.lineWidth = tileW * .02;
+    for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 + t * .3; c.beginPath(); c.moveTo(wx, wy); c.lineTo(wx + Math.cos(a) * tileW * .09, wy + Math.sin(a) * tileW * .09); c.stroke(); }
   }
 
-  // Aiguille
-  c.save();glowFill(c,'#79b7ff',(11+f*13));spire(c,W*.52,-H*.72,-H-tileH*.6,'#1a2e50','#79b7ff');noGlow(c);c.restore();
-  orb(c,0,-H-tileH*.58,(4+level)*tileW*.028,'#79b7ff',(14+f*14));
+  if (level >= 3) orb(c, cx, cy - wallH * .08, tileW * .055, '#ff9840', 11 + f * 9);
+  if (sel) selDiamond(c, d, wallH * .3, '#d66c5f');
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// 11. FLÈCHE DES ÂMES  1×1
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.soulSpire = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
+
+  drawFaceLeft( c, d, wallH, '#161c2e');
+  drawFaceRight(c, d, wallH, '#0e1420');
+  drawRoof(c, d, '#1c2438', C.black);
+
+  // Tour élancée = aiguille très haute
+  isoSpire(c, iso, wallH, wallH * (2.2 + level * .3), '#1a2e50', '#79b7ff', f);
 
   // Wisps orbitaux
-  for(let i=0;i<(2+level);i++){
-    const a=i/(2+level)*Math.PI*2+t*.7;
-    c.save();glowFill(c,'#9ad4ff',(5+f*5));
-    c.fillStyle='#9ad4ff';
-    c.beginPath();c.arc(W*.44*Math.cos(a),-H*.5+W*.18*Math.sin(a),(1.8+level*.3)*tileW*.022,0,Math.PI*2);c.fill();
-    noGlow(c);c.restore();
+  const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+  const cy = d.top.y + (d.bottom.y - d.top.y) * .5 - wallH * 1.2;
+  for (let i = 0; i < 2 + level; i++) {
+    const a = i / (2 + level) * Math.PI * 2 + t * .7;
+    orb(c, cx + d.hw * .55 * Math.cos(a), cy + d.hh * .22 * Math.sin(a), tileW * .038, '#9ad4ff', 6 + f * 5);
   }
 
-  windowSlit(c,0,-H*.38,tileW*.07,tileH*.24,'#79b7ff',f);
-  if(level>=2) windowSlit(c,0,-H*.6,tileW*.07,tileH*.2,'#9ad4ff',f);
+  windowLeft(c, d, wallH, .42, '#79b7ff', f);
+  if (level >= 2) windowLeft(c, d, wallH, .68, '#9ad4ff', f);
 
-  if(level>=3){
-    c.save();c.globalAlpha=.16;
-    const bg=c.createLinearGradient(0,-H-tileH*.6,0,-H-tileH*2.5);
-    bg.addColorStop(0,'#79b7ff');bg.addColorStop(1,'rgba(121,183,255,0)');
-    c.fillStyle=bg;c.fillRect(-tileW*.035,-H-tileH*2.5,tileW*.07,tileH*1.9);
+  if (level >= 3) {
+    c.save(); c.globalAlpha = .16;
+    const bg = c.createLinearGradient(cx, cy, cx, cy - wallH * 2);
+    bg.addColorStop(0, '#79b7ff'); bg.addColorStop(1, 'rgba(121,183,255,0)');
+    c.fillStyle = bg; c.fillRect(cx - tileW * .03, cy - wallH * 2, tileW * .06, wallH * 1.5);
     c.restore();
   }
-  if(sel)selBox(c,W,H,'#79b7ff');
+
+  if (sel) selDiamond(c, d, wallH, '#79b7ff');
 };
 
-// ============================================================
-// 12. PIÈGE MAUDIT   (1×1)
-// ============================================================
-DRAW_FN.cursedTrap = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.7, H=tileH*sh*.6;
-  dropShadow(c,W,tileH*sh*.2);
+// ───────────────────────────────────────────────────────────────────────────
+// 12. PIÈGE MAUDIT  1×1
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.cursedTrap = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
 
-  // Plaque
-  c.fillStyle='#2a1a1e';c.strokeStyle=P.black;c.lineWidth=1.4;
-  c.beginPath();c.ellipse(0,0,W*.42,W*.17,0,0,Math.PI*2);c.fill();c.stroke();
+  // Plaque au sol = toit plat (quasi pas de murs)
+  drawRoof(c, d, '#2a1a1e', C.black);
 
-  // Rune
-  c.save();c.globalAlpha=.28+f*.24;c.fillStyle=P.blood;c.textAlign='center';c.textBaseline='middle';
-  c.font=`${tileW*.2}px serif`;c.fillText('ᛝ',0,-tileH*.04);c.restore();
+  // Rune gravée dans la plaque
+  const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+  const cy = d.top.y + (d.bottom.y - d.top.y) * .5;
+  c.save(); c.globalAlpha = .3 + f * .22; c.fillStyle = C.blood;
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = `${tileW * .28}px serif`; c.fillText('ᛝ', cx, cy); c.restore();
 
   // Piques
-  const spikeH=(tileH*.12+level*tileH*.12);
-  const nSpikes=2+level;
-  for(let i=0;i<nSpikes;i++){
-    const sx=-W*.32+i*(W*.64/(nSpikes-1||1));
-    const bob=Math.sin(t*1.4+i*.8)*tileH*.025*(level>=3?.7:0);
-    c.fillStyle='#8a7060';c.strokeStyle=P.black;c.lineWidth=.9;
-    poly(c,sx-tileW*.03,0,sx,-spikeH-bob,sx+tileW*.03,0);
-    c.fill();c.stroke();
+  const nSpikes = 2 + level;
+  const spikeH  = wallH * (.55 + level * .22);
+  for (let i = 0; i < nSpikes; i++) {
+    const ti = (i + .5) / nSpikes;
+    const sx = d.top.x + (d.bottom.x - d.top.x) * ti;
+    const sy = d.top.y + (d.bottom.y - d.top.y) * ti;
+    const bob = Math.sin(t * 1.4 + i * .8) * tileH * .025 * (level >= 3 ? .8 : 0);
+    c.fillStyle = '#8a7060'; c.strokeStyle = C.black; c.lineWidth = .9;
+    c.beginPath();
+    c.moveTo(sx - tileW * .025, sy);
+    c.lineTo(sx, sy - spikeH - bob);
+    c.lineTo(sx + tileW * .025, sy);
+    c.closePath(); c.fill(); c.stroke();
   }
 
-  c.save();glowFill(c,P.blood,(4+f*5));
-  c.beginPath();c.ellipse(0,-tileH*.04,W*.22,tileH*.06,0,0,Math.PI*2);
-  c.fillStyle=`rgba(216,72,88,${.07+f*.07})`;c.fill();noGlow(c);c.restore();
+  c.save(); c.shadowColor = C.blood; c.shadowBlur = 4 + f * 6;
+  c.beginPath(); c.ellipse(cx, cy, d.hw * .22, d.hh * .22, 0, 0, Math.PI * 2);
+  c.fillStyle = `rgba(216,72,88,${.07 + f * .07})`; c.fill(); c.shadowBlur = 0; c.restore();
 
-  if(sel)selBox(c,W,H,P.blood);
+  if (sel) selDiamond(c, d, spikeH, C.blood);
 };
 
-// ============================================================
-// 13. REMPART D'OSSEMENTS   (1×1)
-// ============================================================
-DRAW_FN.wall = function(c,tileW,tileH,sw,sh,level,t,f,sel){
-  const W=tileW*sw*.94, H=tileH*sh*(1+level*.28);
-  dropShadow(c,W,tileH*sh*.3);
+// ───────────────────────────────────────────────────────────────────────────
+// 13. REMPART D'OSSEMENTS  1×1
+// ───────────────────────────────────────────────────────────────────────────
+DRAW_FN.wall = function(c, iso, level, t, f, sel) {
+  const { d, wallH, tileW, tileH } = iso;
+  groundShadow(c, d);
 
-  c.fillStyle=`hsl(270,${12+level*4}%,${20+level*3}%)`;c.strokeStyle=P.black;c.lineWidth=1.8;
-  c.fillRect(-W/2,-H,W,H);c.strokeRect(-W/2,-H,W,H);
+  const lc = `hsl(270,${12+level*4}%,${16+level*4}%)`;
+  const rc = `hsl(270,${10+level*3}%,${11+level*3}%)`;
+  const tc = `hsl(270,${14+level*5}%,${20+level*4}%)`;
 
-  // Joints
-  c.save();c.globalAlpha=.16;c.strokeStyle='#000';c.lineWidth=.7;
-  for(let i=1;i<3;i++){c.beginPath();c.moveTo(-W/2,-H*i/3);c.lineTo(W/2,-H*i/3);c.stroke();}c.restore();
+  drawFaceLeft( c, d, wallH, lc);
+  drawFaceRight(c, d, wallH, rc);
+  drawRoof(c, d, tc, C.black);
 
-  // Créneaux
-  const n=2+level,cw2=W/n,ch2=tileH*(.18+level*.08);
-  for(let i=0;i<n;i+=2){
-    c.fillStyle=`hsl(270,${14+level*5}%,${24+level*4}%)`;
-    c.strokeStyle=P.black;c.lineWidth=1.3;
-    c.fillRect(-W/2+i*cw2,-H-ch2,cw2,ch2);c.strokeRect(-W/2+i*cw2,-H-ch2,cw2,ch2);
+  const cH = wallH * (.22 + level * .06);
+  crenelsLeft( c, d, 2 + level, cH, `hsl(270,${16+level*5}%,${24+level*4}%)`);
+  crenelsRight(c, d, 2 + level, cH, `hsl(270,${16+level*5}%,${24+level*4}%)`);
+
+  if (level >= 2) {
+    const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+    const cy = d.top.y + (d.bottom.y - d.top.y) * .5 - wallH * .1;
+    c.fillStyle = C.bone; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.font = `${tileW * .24}px serif`; c.globalAlpha = .55; c.fillText('☠', cx, cy); c.globalAlpha = 1;
+  }
+  if (level >= 3) {
+    const cx = d.top.x + (d.bottom.x - d.top.x) * .5;
+    const cy = d.top.y + (d.bottom.y - d.top.y) * .5 - wallH * .1;
+    c.save(); c.globalAlpha = .28 + f * .2; c.fillStyle = C.blood;
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.font = `${tileW * .18}px serif`; c.fillText('ᚻ', cx - tileW * .18, cy); c.restore();
   }
 
-  if(level>=2){c.fillStyle=P.bone;c.textAlign='center';c.textBaseline='middle';
-    c.font=`${tileW*.2}px serif`;c.globalAlpha=.55;c.fillText('☠',0,-H*.55);c.globalAlpha=1;}
-  if(level>=3){c.save();c.globalAlpha=.28+f*.22;c.fillStyle=P.blood;
-    c.textAlign='center';c.textBaseline='middle';c.font=`${tileW*.16}px serif`;c.fillText('ᚻ',0,-H*.25);c.restore();}
-
-  if(sel)selBox(c,W,H,'#887796');
+  if (sel) selDiamond(c, d, wallH, '#887796');
 };
