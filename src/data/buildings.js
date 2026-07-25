@@ -4,11 +4,11 @@ export const BUILDINGS = {
   townHall: {
     name: 'Trône corrompu',
     description: 'Cœur du royaume. Son niveau limite celui des autres bâtiments et agrandit le domaine constructible.',
-    size: { w: 4, h: 4 }, cost: {}, buildTime: 0, maxLevel: 5, production: null,
+    size: { w: 5, h: 5 }, cost: {}, buildTime: 0, maxLevel: 5, production: null,
     storage: { gold: 1200, wood: 1200, essence: 300 },
     colors: ['#29222f', '#18151d', '#a66cff'],
-    sprite: 'assets/hdv-dark-fortress.jpeg',
-    spriteRender: { maxTilesWide: 5, renderScale: 0.92, anchorY: 0.91, offsetX: 0, offsetY: 0 },
+    sprite: 'assets/hdv1-fortress.webp',
+    spriteRender: { maxTilesWide: 4.45, renderScale: 0.92, anchorY: 0.965, offsetX: 0, offsetY: 0 },
     category: 'core'
   },
   goldMine: {
