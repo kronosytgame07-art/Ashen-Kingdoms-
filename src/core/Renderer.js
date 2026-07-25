@@ -6,6 +6,11 @@
 import { VillageRenderer } from './VillageRenderer.js';
 import { BattleRenderer } from './BattleRenderer.js';
 
+// Applique le remplacement visuel du Trône après le chargement de VillageRenderer.
+// Ce module surcharge uniquement drawBuilding() pour townHall et laisse tous les
+// autres bâtiments utiliser leur rendu procédural actuel.
+import './SpriteTownHallPatch.js';
+
 export class Renderer {
   constructor(canvas, grid, definitions, assets) {
     this.canvas = canvas;
