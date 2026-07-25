@@ -10,11 +10,27 @@
   <meta name="apple-mobile-web-app-title" content="Ashen Kingdoms" />
   <meta name="description" content="Construisez et défendez votre royaume maudit dans un univers dark fantasy." />
   <title>Ashen Kingdoms</title>
-  <link rel="manifest" href="/manifest.json" />
+  <link rel="manifest" href="./manifest.json" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Cinzel+Decorative:wght@700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=hdv9" />
+  <script>
+    // Le précédent service worker était enregistré sur /sw.js, donc hors du
+    // sous-dossier GitHub Pages du projet. On le retire ainsi que ses caches
+    // pour empêcher Safari de servir indéfiniment l'ancien bâtiment.
+    window.__ASHEN_BUILD__ = 'hdv9';
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations()
+        .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+        .catch(() => {});
+    }
+    if ('caches' in window) {
+      caches.keys()
+        .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+        .catch(() => {});
+    }
+  </script>
 </head>
 <body>
   <div id="portraitBlocker" class="portrait-blocker" aria-live="polite">
@@ -127,15 +143,8 @@
     <div id="toast" class="toast" role="status"></div>
   </div>
 
-  <script type="module" src="src/core/BuildingHeightLimiter.js"></script>
-  <script type="module" src="src/core/SpriteTownHallPatch.js"></script>
-  <script type="module" src="src/main.js"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('[SW] Registration failed:', err));
-      });
-    }
-  </script>
+  <script type="module" src="src/core/BuildingHeightLimiter.js?v=hdv9"></script>
+  <script type="module" src="src/core/SpriteTownHallPatch.js?v=hdv9"></script>
+  <script type="module" src="src/main.js?v=hdv9"></script>
 </body>
 </html>
