@@ -13,10 +13,10 @@ import { ClanManager } from './ClanManager.js';
 import { GameUI } from '../ui/GameUI.js';
 import { bus, EVENTS } from './EventBus.js';
 
-const makeId = () => globalThis.crypto?.randomUUID?.() || `b-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const LONG_PRESS_MS = 500;
-const MOVE_TOLERANCE = 10;
+const makeId  = () => globalThis.crypto?.randomUUID?.() || `b-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const clamp   = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const LONG_PRESS_MS   = 500;
+const MOVE_TOLERANCE  = 10;
 
 export class Game {
   constructor(canvas, options = {}) {
@@ -50,21 +50,22 @@ export class Game {
       selectedId: null, placementType: null, movingId: null,
       preview: null, liftedId: null, collectionPopups: [], troopTransfers: []
     };
-    this.pointers = new Map();
-    this.drag = null;
-    this.pinch = null;
+    this.pointers  = new Map();
+    this.drag      = null;
+    this.pinch     = null;
     this.longPressTimer = null;
-    this.lastFrame = performance.now();
-    this.lastUiUpdate = 0;
-    this.dirty = true;
+    this.lastFrame      = performance.now();
+    this.lastUiUpdate   = 0;
+    this.dirty   = true;
     this.running = true;
     this.saveInterval = null;
-    this._busUnsubs = [];
+    this._busUnsubs   = [];
   }
 
   async start() {
-    for (const [type, def] of Object.entries(BUILDINGS)) if (def.sprite) await this.assets.loadImage(type, def.sprite);
-    const offline = this.economy.applyOfflineProgress(this.state);
+    for (const [type, def] of Object.entries(BUILDINGS))
+      if (def.sprite) await this.assets.loadImage(type, def.sprite);
+    const offline        = this.economy.applyOfflineProgress(this.state);
     const trainedOffline = this.training.applyOfflineProgress(this.state);
     this.refreshQuests();
     this._bindBusEvents();
@@ -82,7 +83,7 @@ export class Game {
     this._busUnsubs = [];
   }
 
-  // ── EventBus subscriptions ──────────────────────────────────────────
+  // ── EventBus ─────────────────────────────────────────────────────────
 
   _bindBusEvents() {
     this._busUnsubs.push(
@@ -126,21 +127,27 @@ export class Game {
   // ── offline notification ─────────────────────────────────────────────
 
   notifyOfflineProgress(result, trainedOffline = []) {
-    if (trainedOffline.length > 0) this.ui.toast(`${trainedOffline.length} troupe(s) ont rejoint les Brasiers`, 'success');
-    else if (result.completed > 0) this.ui.toast(`${result.completed} construction(s) terminée(s) pendant votre absence`, 'success');
-    else if (result.elapsedSeconds > 30 && result.produced >= 1) this.ui.toast('Vos extracteurs ont continué à produire', 'success');
+    if (trainedOffline.length > 0)
+      this.ui.toast(`${trainedOffline.length} troupe(s) ont rejoint les Brasiers`, 'success');
+    else if (result.completed > 0)
+      this.ui.toast(`${result.completed} construction(s) terminée(s) pendant votre absence`, 'success');
+    else if (result.elapsedSeconds > 30 && result.produced >= 1)
+      this.ui.toast('Vos extracteurs ont continué à produire', 'success');
   }
 
   // ── long-press move ────────────────────────────────────────────────
 
-  clearLongPress() { if (this.longPressTimer) clearTimeout(this.longPressTimer); this.longPressTimer = null; }
+  clearLongPress() {
+    if (this.longPressTimer) clearTimeout(this.longPressTimer);
+    this.longPressTimer = null;
+  }
 
   beginLongPressMove(building, pos) {
     this.clearLongPress();
     if (!building || building.type === 'townHall') return;
     this.ui.closeContext();
-    this.interaction.movingId = building.id;
-    this.interaction.liftedId = building.id;
+    this.interaction.movingId  = building.id;
+    this.interaction.liftedId  = building.id;
     this.interaction.selectedId = null;
     this.drag.longPressTriggered = true;
     this.drag.original = { col: building.col, row: building.row };
@@ -153,50 +160,92 @@ export class Game {
   // ── input binding ───────────────────────────────────────────────────
 
   bindEvents() {
-    const pos = (e) => { const r = this.canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    const pos = (e) => {
+      const r = this.canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
 
+    // ── pointerdown ──────────────────────────────────────────────────
     this.canvas.addEventListener('pointerdown', (e) => {
       this.canvas.setPointerCapture(e.pointerId);
-      const p = pos(e); this.pointers.set(e.pointerId, p);
+      const p = pos(e);
+      this.pointers.set(e.pointerId, p);
+
       if (this.battle.state?.active) {
         if (this.battle.deploy(p.x, p.y, this.renderer.viewport())) {
           bus.emit(EVENTS.UNIT_DEPLOYED, { state: this.battle.state });
-          this.ui.updateBattle(this.battle.state); this.dirty = true;
+          this.ui.updateBattle(this.battle.state);
+          this.dirty = true;
         }
         return;
       }
+
       if (this.pointers.size === 2) {
         this.clearLongPress();
         const [a, b] = [...this.pointers.values()];
-        this.pinch = { distance: Math.hypot(a.x-b.x,a.y-b.y), zoom: this.state.camera.zoom, center:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}, camera:{...this.state.camera} };
-        this.drag = null; return;
+        this.pinch = {
+          distance: Math.hypot(a.x - b.x, a.y - b.y),
+          zoom: this.state.camera.zoom,
+          center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+          camera: { ...this.state.camera }
+        };
+        this.drag = null;
+        return;
       }
-      const cell = this.grid.screenToGrid(p.x, p.y, this.state.camera, this.renderer.viewport());
+
+      const cell    = this.grid.screenToGrid(p.x, p.y, this.state.camera, this.renderer.viewport());
       const pressed = this.grid.buildingAt(cell.col, cell.row, BUILDINGS, this.state.buildings);
-      this.drag = { start:p, camera:{...this.state.camera}, moved:false, wallCells:new Set(), pressedBuildingId:pressed?.id??null, longPressTriggered:false };
+      this.drag = {
+        start: p, camera: { ...this.state.camera }, moved: false,
+        wallCells: new Set(), pressedBuildingId: pressed?.id ?? null, longPressTriggered: false
+      };
       if (!this.interaction.placementType && !this.interaction.movingId && pressed)
         this.longPressTimer = setTimeout(() => this.beginLongPressMove(pressed, p), LONG_PRESS_MS);
       this.updatePreview(p);
     });
 
+    // ── pointermove ──────────────────────────────────────────────────
     this.canvas.addEventListener('pointermove', (e) => {
-      if (this.battle.state?.active || !this.pointers.has(e.pointerId)) return;
-      const p = pos(e); this.pointers.set(e.pointerId, p);
+      const p = pos(e);
+
+      // Bataille active : pan/zoom désactivé mais on met à jour le pointer
+      if (this.battle.state?.active) {
+        this.pointers.set(e.pointerId, p);
+        return;
+      }
+
+      // Enregistre le pointer même s'il était absent (defensive — évite le freeze)
+      if (!this.pointers.has(e.pointerId)) {
+        this.pointers.set(e.pointerId, p);
+        return;
+      }
+      this.pointers.set(e.pointerId, p);
+
+      // Pinch-zoom à deux doigts
       if (this.pointers.size === 2 && this.pinch) {
         this.clearLongPress();
         const [a, b] = [...this.pointers.values()];
-        const center = {x:(a.x+b.x)/2, y:(a.y+b.y)/2};
-        const zoom = clamp(this.pinch.zoom * Math.hypot(a.x-b.x,a.y-b.y) / this.pinch.distance, .55, 1.65);
+        const center = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        const zoom   = clamp(
+          this.pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / this.pinch.distance,
+          0.55, 1.65
+        );
         this.state.camera.zoom = zoom;
-        this.state.camera.x = this.pinch.camera.x + (center.x - this.pinch.center.x);
-        this.state.camera.y = this.pinch.camera.y + (center.y - this.pinch.center.y);
-        this.dirty = true; return;
+        this.state.camera.x   = this.pinch.camera.x + (center.x - this.pinch.center.x);
+        this.state.camera.y   = this.pinch.camera.y + (center.y - this.pinch.center.y);
+        this.dirty = true;
+        return;
       }
+
       if (!this.drag) return;
-      const dx = p.x-this.drag.start.x, dy = p.y-this.drag.start.y;
-      const d = Math.hypot(dx, dy);
+
+      const dx = p.x - this.drag.start.x;
+      const dy = p.y - this.drag.start.y;
+      const d  = Math.hypot(dx, dy);
+
       if (d > MOVE_TOLERANCE && !this.drag.longPressTriggered) this.clearLongPress();
       this.drag.moved ||= d > 7;
+
       if (this.interaction.placementType || this.interaction.movingId) {
         this.updatePreview(p);
         if (this.interaction.placementType === 'wall' && this.drag.moved) this.placeWallPreview();
@@ -208,46 +257,62 @@ export class Game {
       }
     });
 
+    // ── pointerup / pointercancel ─────────────────────────────────────
     const endPointer = (e) => {
-      const p = pos(e); this.pointers.delete(e.pointerId);
+      const p = pos(e);
+      this.pointers.delete(e.pointerId);
       if (this.battle.state?.active) return;
       this.clearLongPress();
       if (this.pointers.size < 2) this.pinch = null;
-      if (this.drag?.longPressTriggered && this.interaction.movingId) this.finishLongPressMove(p);
-      else if (this.drag && !this.drag.moved) this.handleTap(p);
-      this.drag = null; this.save();
+      if (this.drag?.longPressTriggered && this.interaction.movingId)
+        this.finishLongPressMove(p);
+      else if (this.drag && !this.drag.moved)
+        this.handleTap(p);
+      this.drag = null;
+      this.save();
     };
-    this.canvas.addEventListener('pointerup', endPointer);
+    this.canvas.addEventListener('pointerup',     endPointer);
     this.canvas.addEventListener('pointercancel', endPointer);
+
+    // ── wheel ────────────────────────────────────────────────────────
     this.canvas.addEventListener('wheel', (e) => {
       if (this.battle.state?.active) return;
       e.preventDefault();
-      this.state.camera.zoom = clamp(this.state.camera.zoom - Math.sign(e.deltaY) * .08, .55, 1.65);
+      this.state.camera.zoom = clamp(this.state.camera.zoom - Math.sign(e.deltaY) * 0.08, 0.55, 1.65);
       this.dirty = true;
     }, { passive: false });
-    window.addEventListener('resize', () => { this.renderer.resize(); this.dirty = true; });
+
+    window.addEventListener('resize',       () => { this.renderer.resize(); this.dirty = true; });
     window.addEventListener('beforeunload', () => this.save());
 
+    // ── UI callbacks ─────────────────────────────────────────────────
     this.ui.bind({
       onBuild: (type) => {
-        if (!isBuildingUnlocked(type, this.state)) return this.ui.toast('Améliorez le Trône corrompu pour débloquer ce bâtiment', 'error');
+        if (!isBuildingUnlocked(type, this.state))
+          return this.ui.toast('Améliorez le Trône corrompu pour débloquer ce bâtiment', 'error');
         this.ui.closeContext();
         this.interaction.placementType = type;
-        this.interaction.movingId = null;
-        this.interaction.selectedId = null;
+        this.interaction.movingId      = null;
+        this.interaction.selectedId    = null;
         this.ui.toast(`Placez : ${BUILDINGS[type].name}`);
       },
-      onTrain: (type, barracksId) => this.trainUnit(type, barracksId),
-      onCreateClan: (name) => this.createClan(name),
-      onLeaveClan: () => this.leaveClan(),
-      onDonateClanTroop: (buildingId, type) => this.donateClanTroop(buildingId, type),
+      onTrain:            (type, barracksId) => this.trainUnit(type, barracksId),
+      onCreateClan:       (name)             => this.createClan(name),
+      onLeaveClan:        ()                 => this.leaveClan(),
+      onDonateClanTroop:  (buildingId, type) => this.donateClanTroop(buildingId, type),
       onReceiveClanTroop: (buildingId, type) => this.receiveClanTroop(buildingId, type),
-      onUpgrade: () => this.upgradeSelected(),
-      onRemove: () => this.removeSelected(),
-      onCenter: () => { this.ui.closeContext(); this.state.camera = { x:0, y:-20, zoom:1 }; this.dirty = true; },
-      onAttack: () => this.startBattle(),
-      onSelectBattleUnit: (type) => { if (this.battle.selectUnit(type)) { this.ui.updateBattle(this.battle.state); this.dirty = true; } },
-      onEndBattle: () => this.finishBattle(),
+      onUpgrade:          ()                 => this.upgradeSelected(),
+      onRemove:           ()                 => this.removeSelected(),
+      onCenter: () => {
+        this.ui.closeContext();
+        this.state.camera = { x: 0, y: -20, zoom: 1 };
+        this.dirty = true;
+      },
+      onAttack:            ()     => this.startBattle(),
+      onSelectBattleUnit:  (type) => {
+        if (this.battle.selectUnit(type)) { this.ui.updateBattle(this.battle.state); this.dirty = true; }
+      },
+      onEndBattle:    () => this.finishBattle(),
       onReturnVillage: () => this.returnToVillage()
     });
   }
@@ -292,12 +357,19 @@ export class Game {
   finishLongPressMove(p) {
     const building = this.state.buildings.find((b) => b.id === this.interaction.movingId);
     if (!building || !this.drag?.original) return;
-    const cell = this.grid.screenToGrid(p.x, p.y, this.state.camera, this.renderer.viewport());
+    const cell  = this.grid.screenToGrid(p.x, p.y, this.state.camera, this.renderer.viewport());
     const valid = this.grid.canPlace(building.type, cell.col, cell.row, BUILDINGS, this.state.buildings, building.id);
-    if (valid) { building.col = cell.col; building.row = cell.row; this.ui.toast('Bâtiment déplacé', 'success'); }
-    else { building.col = this.drag.original.col; building.row = this.drag.original.row; this.ui.toast('Emplacement invalide — bâtiment replacé', 'error'); }
-    this.interaction.movingId = null; this.interaction.liftedId = null;
-    this.interaction.preview = null; this.interaction.selectedId = building.id;
+    if (valid) {
+      building.col = cell.col; building.row = cell.row;
+      this.ui.toast('Bâtiment déplacé', 'success');
+    } else {
+      building.col = this.drag.original.col; building.row = this.drag.original.row;
+      this.ui.toast('Emplacement invalide — bâtiment replacé', 'error');
+    }
+    this.interaction.movingId   = null;
+    this.interaction.liftedId   = null;
+    this.interaction.preview    = null;
+    this.interaction.selectedId = building.id;
     this.dirty = true;
   }
 
@@ -305,7 +377,7 @@ export class Game {
 
   startBattle() {
     const army = armyCounts(this.state);
-    const vp = this.renderer.viewport();
+    const vp   = this.renderer.viewport();
     const result = this.battle.start({ ...this.state, army }, vp);
     if (!result.ok) return this.ui.toast(result.reason, 'error');
     bus.emit(EVENTS.BATTLE_STARTED, { state: this.battle.state });
@@ -329,7 +401,10 @@ export class Game {
     bus.emit(EVENTS.RESOURCES_CHANGED, { resources: this.state.resources });
     this.ui.updateBattle(this.battle.state);
     this.ui.showBattleResult(result);
-    this.ui.toast(result.stars > 0 ? 'Raid terminé — butin récupéré' : 'Raid échoué', result.stars > 0 ? 'success' : 'error');
+    this.ui.toast(
+      result.stars > 0 ? 'Raid terminé — butin récupéré' : 'Raid échoué',
+      result.stars > 0 ? 'success' : 'error'
+    );
     this.save(); this.dirty = true;
   }
 
@@ -365,10 +440,15 @@ export class Game {
   }
 
   handleTap(p) {
-    const cell = this.grid.screenToGrid(p.x, p.y, this.state.camera, this.renderer.viewport());
+    const cell     = this.grid.screenToGrid(p.x, p.y, this.state.camera, this.renderer.viewport());
     if (this.interaction.placementType || this.interaction.movingId) { this.place(cell); return; }
     const building = this.grid.buildingAt(cell.col, cell.row, BUILDINGS, this.state.buildings);
-    if (!building) { this.interaction.selectedId = null; this.ui.closeContext(); this.dirty = true; return; }
+    if (!building) {
+      this.interaction.selectedId = null;
+      this.ui.closeContext();
+      this.dirty = true;
+      return;
+    }
     if (BUILDINGS[building.type]?.extractor && building.readyAt <= Date.now()) {
       const result = this.economy.collectExtractor(this.state, building);
       if (result.ok) {
@@ -397,16 +477,17 @@ export class Game {
     if (this.interaction.movingId) {
       const building = this.state.buildings.find((b) => b.id === this.interaction.movingId);
       building.col = cell.col; building.row = cell.row;
-      this.interaction.movingId = null; this.interaction.liftedId = null;
+      this.interaction.movingId   = null;
+      this.interaction.liftedId   = null;
       this.interaction.selectedId = building.id;
     } else {
       if (!isBuildingUnlocked(type, this.state)) return this.ui.toast('Bâtiment verrouillé', 'error');
       const def = BUILDINGS[type];
       if (!this.economy.spend(this.state, def.cost)) return this.ui.toast('Ressources insuffisantes', 'error');
       const building = { id: makeId(), type, col: cell.col, row: cell.row, level: 1, readyAt: Date.now() + def.buildTime * 1000 };
-      if (def.extractor) { building.storedResource = 0; building.lastProductionAt = Date.now(); }
-      if (def.panel === 'campfire') building.garrison = { skeleton: 0, ghoul: 0, necromancer: 0 };
-      if (def.panel === 'clanCastle') building.reinforcements = { skeleton: 0, ghoul: 0, necromancer: 0 };
+      if (def.extractor)       { building.storedResource = 0; building.lastProductionAt = Date.now(); }
+      if (def.panel === 'campfire')    building.garrison       = { skeleton: 0, ghoul: 0, necromancer: 0 };
+      if (def.panel === 'clanCastle')  building.reinforcements = { skeleton: 0, ghoul: 0, necromancer: 0 };
       this.state.buildings.push(building);
       this.interaction.selectedId = building.id;
       if (!(type === 'wall' && keepWallMode)) this.interaction.placementType = null;
@@ -415,7 +496,8 @@ export class Game {
       this.refreshQuests();
     }
     this.clans.ensureState(this.state);
-    this.interaction.preview = null; this.save(); this.dirty = true;
+    this.interaction.preview = null;
+    this.save(); this.dirty = true;
   }
 
   // ── upgrade / remove ───────────────────────────────────────────────
@@ -425,10 +507,13 @@ export class Game {
     if (!building || building.readyAt > Date.now()) return;
     const allowedMax = maxLevelFor(building.type, this.state, BUILDINGS);
     if (building.level >= allowedMax)
-      return this.ui.toast(building.type === 'townHall' ? 'Niveau maximum' : 'Améliorez le Trône corrompu pour continuer', 'error');
+      return this.ui.toast(
+        building.type === 'townHall' ? 'Niveau maximum' : 'Améliorez le Trône corrompu pour continuer',
+        'error'
+      );
     const cost = upgradeCost(building);
     if (!this.economy.spend(this.state, cost)) return this.ui.toast('Ressources insuffisantes', 'error');
-    building.level += 1;
+    building.level  += 1;
     building.readyAt = Date.now() + upgradeTime(building) * 1000;
     bus.emit(EVENTS.BUILDING_UPGRADED, { building });
     bus.emit(EVENTS.RESOURCES_CHANGED, { resources: this.state.resources });
@@ -443,11 +528,14 @@ export class Game {
       return this.ui.toast('Videz ce Brasier avant de le retirer', 'error');
     if (building.type === 'clanCastle' && Object.values(building.reinforcements ?? {}).some((n) => n > 0))
       return this.ui.toast('Videz les renforts avant de retirer le Château', 'error');
-    Object.entries(BUILDINGS[building.type].cost).forEach(([res, amt]) => { this.state.resources[res] += Math.floor(amt * .5); });
+    Object.entries(BUILDINGS[building.type].cost).forEach(([res, amt]) => {
+      this.state.resources[res] += Math.floor(amt * 0.5);
+    });
     this.state.buildings = this.state.buildings.filter((b) => b.id !== building.id);
-    this.interaction.selectedId = null; this.ui.closeContext();
-    bus.emit(EVENTS.BUILDING_REMOVED, { building });
-    bus.emit(EVENTS.RESOURCES_CHANGED, { resources: this.state.resources });
+    this.interaction.selectedId = null;
+    this.ui.closeContext();
+    bus.emit(EVENTS.BUILDING_REMOVED,   { building });
+    bus.emit(EVENTS.RESOURCES_CHANGED,  { resources: this.state.resources });
     this.ui.toast('Bâtiment retiré');
     this.save(); this.dirty = true;
   }
@@ -455,7 +543,8 @@ export class Game {
   // ── quests ──────────────────────────────────────────────────────────
 
   refreshQuests() {
-    this.state.completedQuests ??= []; this.state.claimedQuests ??= [];
+    this.state.completedQuests ??= [];
+    this.state.claimedQuests   ??= [];
     const counts = armyCounts(this.state);
     for (const quest of QUESTS) {
       let done = false;
@@ -472,7 +561,9 @@ export class Game {
     }
   }
 
-  currentQuest() { return QUESTS.find((q) => !this.state.completedQuests.includes(q.id)) ?? null; }
+  currentQuest() {
+    return QUESTS.find((q) => !this.state.completedQuests.includes(q.id)) ?? null;
+  }
 
   // ── game loop ─────────────────────────────────────────────────────────
 
@@ -512,13 +603,15 @@ export class Game {
 
   loop(time) {
     if (!this.running) return;
-    const dt = Math.min(.1, (time - this.lastFrame) / 1000); this.lastFrame = time;
+    const dt = Math.min(0.1, (time - this.lastFrame) / 1000);
+    this.lastFrame = time;
     this.update(dt);
     if (this.dirty || time - this.lastUiUpdate > 250) {
       this.renderer.render(this.state, this.interaction, time, this.battle.state);
       if (!this.battle.state?.active && !this.battle.state?.result)
         this.ui.update(this.state, this.interaction.selectedId, this.interaction.placementType, this.currentQuest());
-      this.lastUiUpdate = time; this.dirty = false;
+      this.lastUiUpdate = time;
+      this.dirty = false;
     }
     requestAnimationFrame((next) => this.loop(next));
   }
