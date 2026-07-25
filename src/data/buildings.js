@@ -7,7 +7,7 @@ export const BUILDINGS = {
     size: { w: 5, h: 5 }, cost: {}, buildTime: 0, maxLevel: 5, production: null,
     storage: { gold: 1200, wood: 1200, essence: 300 },
     colors: ['#29222f', '#18151d', '#a66cff'],
-    sprite: 'assets/hdv1-fortress.webp',
+    sprite: 'assets/hdv1-fortress.webp?v=hdv9',
     spriteRender: { maxTilesWide: 4.45, renderScale: 0.92, anchorY: 0.965, offsetX: 0, offsetY: 0 },
     category: 'core'
   },
