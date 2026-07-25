@@ -3,7 +3,7 @@
  * Chemins relatifs compatibles avec GitHub Pages et cache invalidé à chaque correctif critique.
  */
 
-const CACHE_NAME = 'ashen-kingdoms-v5';
+const CACHE_NAME = 'ashen-kingdoms-v6';
 
 const STATIC_ASSETS = [
   './',
@@ -12,6 +12,7 @@ const STATIC_ASSETS = [
   './manifest.json',
   './src/main.js',
   './src/core/BuildingHeightLimiter.js',
+  './src/core/SpriteTownHallPatch.js',
   './src/core/Game.js',
   './src/core/Renderer.js',
   './src/core/VillageRenderer.js',
