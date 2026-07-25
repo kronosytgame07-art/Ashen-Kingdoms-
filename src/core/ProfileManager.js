@@ -1,34 +1,58 @@
-const INDEX_KEY = 'ashen-kingdoms-profiles-v1';
+const INDEX_KEY  = 'ashen-kingdoms-profiles-v1';
 const LEGACY_KEY = 'ashen-kingdoms-save-v2';
 
-const makeId = () => globalThis.crypto?.randomUUID?.() || `profile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const makeId = () =>
+  globalThis.crypto?.randomUUID?.() ||
+  `profile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+class MemoryStorage {
+  constructor() { this._data = {}; }
+  getItem(k)    { return Object.prototype.hasOwnProperty.call(this._data, k) ? this._data[k] : null; }
+  setItem(k, v) { this._data[k] = String(v); }
+  removeItem(k) { delete this._data[k]; }
+}
+
+function safeStorage() {
+  try {
+    const s = globalThis.localStorage;
+    s.setItem('__ashen_test__', '1');
+    s.removeItem('__ashen_test__');
+    return s;
+  } catch {
+    console.warn('[ProfileManager] localStorage indisponible — fallback mémoire');
+    return new MemoryStorage();
+  }
+}
 
 export class ProfileManager {
-  constructor(storage = globalThis.localStorage) {
-    this.storage = storage;
+  constructor(storage = null) {
+    this.storage = storage ?? safeStorage();
     this.ensureIndex();
     this.migrateLegacySave();
   }
 
   ensureIndex() {
-    if (!this.storage.getItem(INDEX_KEY)) this.storage.setItem(INDEX_KEY, JSON.stringify({ activeId: null, profiles: [] }));
+    if (!this.storage.getItem(INDEX_KEY))
+      this.storage.setItem(INDEX_KEY, JSON.stringify({ activeId: null, profiles: [] }));
   }
 
   readIndex() {
     try {
       const parsed = JSON.parse(this.storage.getItem(INDEX_KEY));
-      return parsed && Array.isArray(parsed.profiles) ? parsed : { activeId: null, profiles: [] };
+      return parsed && Array.isArray(parsed.profiles)
+        ? parsed
+        : { activeId: null, profiles: [] };
     } catch {
       return { activeId: null, profiles: [] };
     }
   }
 
   writeIndex(index) { this.storage.setItem(INDEX_KEY, JSON.stringify(index)); }
-  saveKey(id) { return `ashen-kingdoms-profile:${id}`; }
+  saveKey(id)       { return `ashen-kingdoms-profile:${id}`; }
 
   migrateLegacySave() {
     const legacy = this.storage.getItem(LEGACY_KEY);
-    const index = this.readIndex();
+    const index  = this.readIndex();
     if (!legacy || index.profiles.length) return;
     const id = makeId();
     index.profiles.push({ id, name: 'Royaume ancien', createdAt: Date.now(), lastPlayedAt: Date.now() });
@@ -37,13 +61,13 @@ export class ProfileManager {
     this.writeIndex(index);
   }
 
-  list() { return [...this.readIndex().profiles].sort((a,b) => b.lastPlayedAt - a.lastPlayedAt); }
+  list()     { return [...this.readIndex().profiles].sort((a, b) => b.lastPlayedAt - a.lastPlayedAt); }
   activeId() { return this.readIndex().activeId; }
 
   create(name = 'Nouveau royaume') {
-    const index = this.readIndex();
-    const id = makeId();
-    const profile = { id, name: name.trim() || 'Nouveau royaume', createdAt: Date.now(), lastPlayedAt: Date.now() };
+    const index   = this.readIndex();
+    const id      = makeId();
+    const profile = { id, name: (name ?? '').trim() || 'Nouveau royaume', createdAt: Date.now(), lastPlayedAt: Date.now() };
     index.profiles.push(profile);
     index.activeId = id;
     this.writeIndex(index);
@@ -51,8 +75,8 @@ export class ProfileManager {
   }
 
   select(id) {
-    const index = this.readIndex();
-    const profile = index.profiles.find((item) => item.id === id);
+    const index   = this.readIndex();
+    const profile = index.profiles.find(item => item.id === id);
     if (!profile) return false;
     profile.lastPlayedAt = Date.now();
     index.activeId = id;
@@ -61,17 +85,17 @@ export class ProfileManager {
   }
 
   rename(id, name) {
-    const index = this.readIndex();
-    const profile = index.profiles.find((item) => item.id === id);
+    const index   = this.readIndex();
+    const profile = index.profiles.find(item => item.id === id);
     if (!profile) return false;
-    profile.name = name.trim() || profile.name;
+    profile.name = (name ?? '').trim() || profile.name;
     this.writeIndex(index);
     return true;
   }
 
   remove(id) {
-    const index = this.readIndex();
-    index.profiles = index.profiles.filter((item) => item.id !== id);
+    const index    = this.readIndex();
+    index.profiles = index.profiles.filter(item => item.id !== id);
     if (index.activeId === id) index.activeId = index.profiles[0]?.id ?? null;
     this.storage.removeItem(this.saveKey(id));
     this.writeIndex(index);
