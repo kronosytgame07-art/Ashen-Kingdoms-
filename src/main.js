@@ -48,8 +48,9 @@ function installTouchCompatibility() {
     }
   };
 
-  gameCanvas.addEventListener('touchstart', (event) => event.preventDefault(), { passive: false });
-  gameCanvas.addEventListener('touchmove',  (event) => event.preventDefault(), { passive: false });
+  // `touch-action: none` suffit à empêcher le scroll et le zoom natifs.
+  // Ne pas appeler preventDefault() sur touchstart/touchmove : Safari iOS peut
+  // alors interrompre pointerup, ce qui casse les taps et les appuis longs.
 }
 
 installTouchCompatibility();
