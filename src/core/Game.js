@@ -172,6 +172,7 @@ export class Game {
       this.pointers.set(e.pointerId, p);
 
       if (this.battle.state?.active) {
+        // BUG-FIX #1 : passe le viewport courant à deploy()
         if (this.battle.deploy(p.x, p.y, this.renderer.viewport())) {
           bus.emit(EVENTS.UNIT_DEPLOYED, { state: this.battle.state });
           this.ui.updateBattle(this.battle.state);
@@ -208,20 +209,17 @@ export class Game {
     this.canvas.addEventListener('pointermove', (e) => {
       const p = pos(e);
 
-      // Bataille active : pan/zoom désactivé mais on met à jour le pointer
       if (this.battle.state?.active) {
         this.pointers.set(e.pointerId, p);
         return;
       }
 
-      // Enregistre le pointer même s'il était absent (defensive — évite le freeze)
       if (!this.pointers.has(e.pointerId)) {
         this.pointers.set(e.pointerId, p);
         return;
       }
       this.pointers.set(e.pointerId, p);
 
-      // Pinch-zoom à deux doigts
       if (this.pointers.size === 2 && this.pinch) {
         this.clearLongPress();
         const [a, b] = [...this.pointers.values()];
@@ -385,17 +383,20 @@ export class Game {
 
   finishBattle() {
     const result = this.battle.finish();
+    // BUG-FIX #8 : finish() retourne null si déjà terminé — évite double emit
     if (result) bus.emit(EVENTS.BATTLE_FINISHED, { result });
   }
 
   applyBattleResult(result) {
+    // BUG-FIX #8 : double protection contre double application du loot
     if (this.battle.state?.rewardApplied) return;
+    if (!result) return;
     this.battle.state.rewardApplied = true;
     for (const [res, amt] of Object.entries(result.loot))
       this.state.resources[res] = (this.state.resources[res] ?? 0) + amt;
-    const survivors = this.battle.state.available;
-    for (const b of this.state.buildings.filter((b) => b.type === 'campfire'))
-      b.garrison = { skeleton: 0, ghoul: 0, necromancer: 0 };
+    const survivors = { ...this.battle.state.available };
+    // BUG-FIX #9 : on accumule dans les garnisons existantes
+    // au lieu de les écraser, pour ne pas perdre les troupes en place
     for (const [type, n] of Object.entries(survivors))
       for (let i = 0; i < n; i++) this.training.assignToCampfire(this.state, type);
     bus.emit(EVENTS.RESOURCES_CHANGED, { resources: this.state.resources });

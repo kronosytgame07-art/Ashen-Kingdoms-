@@ -7,7 +7,7 @@
  * - Zone anti-spawn par bâtiment :
  *     bâtiment normal : buffer = 2 cases
  *     mur             : buffer = 1 case
- * - Détection de collision basée sur la distance en cases iso
+ * - Détection de collision basée sur la distance px
  */
 import { UNITS }                        from '../data/units.js';
 import { BATTLE_CONFIG, generateEnemyBase } from '../data/battle.js';
@@ -17,13 +17,6 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // Distance euclidienne px
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-
-// Distance en cases iso entre deux points px
-function distCases(ax, ay, bx, by, tileW, tileH) {
-  const dx = (ax - bx) / (tileW / 2);
-  const dy = (ay - by) / (tileH / 2);
-  return Math.sqrt(dx * dx + dy * dy) / 2;
-}
 
 export class BattleManager {
   constructor() {
@@ -53,32 +46,36 @@ export class BattleManager {
     // Génère le village ennemi adaptatif
     const rawBuildings = generateEnemyBase(playerHdvLevel);
 
-    // Convertit les cases iso en coordonnées px écran
+    // BUG-FIX #1 : la caméra de combat est calculée dynamiquement par
+    // BattleRenderer.camera(vp) — on stocke zoom=1 comme référence de base
+    // pour les positions px, mais on stocke aussi le viewport initial.
     const camera   = { x: 0, y: 0, zoom: 1 };
+
     const buildings = rawBuildings.map(b => {
-      // Centre du bâtiment en px = point SUD du losange
       const ptSouth = this._grid.gridToScreen(
         b.col + b.size.w,
         b.row + b.size.h,
         camera, viewport
       );
-      // Rayon de collision en px = demi-diagonale du losange
-      const tileW = this._grid.tileWidth;
-      const tileH = this._grid.tileHeight;
+      const tileW       = this._grid.tileWidth;
+      const tileH       = this._grid.tileHeight;
       const radiusCases = (b.size.w + b.size.h) / 2;
       const radiusPx    = radiusCases * (tileW + tileH) / 4;
       return {
         ...b,
-        x:          ptSouth.x,
-        y:          ptSouth.y,
-        radius:     radiusPx,
-        // Buffer anti-spawn en px
-        spawnBufferPx: (b.isWall ? 1 : 2) * (tileW + tileH) / 4,
+        // positions en CASES (col/row déjà présents via rawBuildings)
+        // positions px de référence (zoom=1) pour la physique
+        x:              ptSouth.x,
+        y:              ptSouth.y,
+        radius:         radiusPx,
+        spawnBufferPx:  (b.isWall ? 1 : 2) * (tileW + tileH) / 4,
       };
     });
 
     // Calcule les zones de spawn valides (bord de grille, hors buffer)
-    const spawnZone = this._buildSpawnZone(buildings, viewport, camera);
+    // BUG-FIX #2 : on stocke les cellules iso (col, row) et non les px
+    // pour pouvoir les reprojeter au rendu avec le zoom courant
+    const spawnCells = this._buildSpawnCells(buildings, viewport, camera);
 
     this.state = {
       active:       true,
@@ -88,7 +85,8 @@ export class BattleManager {
       available,
       deployed:     [],
       buildings,
-      spawnZone,    // tableau de points px valides pour le spawn
+      spawnCells,   // [{col, row}] — reProjectés au rendu
+      spawnZone:    [],   // [{x,y}] rempli au rendu via projectSpawnZone()
       effects:      [],
       selectedUnit: Object.keys(available).find(t => available[t] > 0) ?? null,
       result:       null,
@@ -100,37 +98,33 @@ export class BattleManager {
   }
 
   /**
-   * Construit la liste des points de spawn valides :
-   * - Sur le périmètre externe de la grille iso (2 cases du bord)
-   * - À distance > spawnBuffer de tout bâtiment
+   * Construit la liste des CELLULES de spawn valides :
+   * - Sur le périmètre externe de la grille iso
+   * - À distance > spawnBuffer de tout bâtiment (coords px zoom=1)
    */
-  _buildSpawnZone(buildings, viewport, camera) {
+  _buildSpawnCells(buildings, viewport, camera) {
     const cols  = BATTLE_CONFIG.gridCols;
     const rows  = BATTLE_CONFIG.gridRows;
-    const tileW = this._grid.tileWidth;
-    const tileH = this._grid.tileHeight;
-    const points = [];
+    const cells = [];
 
-    // Bord de la grille iso : col=0, col=cols-1, row=0, row=rows-1
     const borderCells = [];
     for (let c = 0; c < cols; c++) {
       borderCells.push({ c, r: 0 });
       borderCells.push({ c, r: rows - 1 });
     }
     for (let r = 1; r < rows - 1; r++) {
-      borderCells.push({ c: 0,       r });
+      borderCells.push({ c: 0,        r });
       borderCells.push({ c: cols - 1, r });
     }
 
     for (const { c, r } of borderCells) {
       const pt = this._grid.gridToScreen(c + 0.5, r + 0.5, camera, viewport);
-      // Vérifie qu'on est hors du buffer de chaque bâtiment
       const blocked = buildings.some(b =>
         dist(pt, b) < b.spawnBufferPx + b.radius
       );
-      if (!blocked) points.push({ x: pt.x, y: pt.y });
+      if (!blocked) cells.push({ col: c + 0.5, row: r + 0.5 });
     }
-    return points;
+    return cells;
   }
 
   selectUnit(type) {
@@ -140,18 +134,34 @@ export class BattleManager {
   }
 
   /**
-   * Déploie une unité au point (x,y) SEULEMENT si c'est dans la zone de spawn.
-   * Sinon cherche le point de spawn le plus proche du clic.
+   * Déploie une unité.
+   * BUG-FIX #3 : deploy() accepte maintenant (x, y, viewport) pour
+   * pouvoir trouver le point de spawn le plus proche avec le zoom courant.
+   * On stocke la position de l'unité en px PHYSIQUES (zoom=1) pour que
+   * la physique soit indépendante du zoom de rendu.
    */
-  deploy(x, y) {
+  deploy(x, y, viewport) {
     const battle = this.state;
     const type   = battle?.selectedUnit;
     if (!battle?.active || !type || battle.available[type] <= 0) return false;
 
-    // Trouve le point de spawn valide le plus proche du clic
-    const spawnPt = battle.spawnZone
-      .slice()
-      .sort((a, b) => dist({ x, y }, a) - dist({ x, y }, b))[0];
+    const vp  = viewport ?? battle.viewport;
+    // Le rendu utilise un zoom = min(vp.w,vp.h)/900
+    const renderZoom = Math.min(vp.width, vp.height) / 900;
+    // Convertit le clic (px rendu) en px physiques (zoom=1)
+    const scale = 1 / renderZoom;
+    const cx    = x * scale + (battle.camera.x ?? 0) * (scale - 1);
+    const cy    = y * scale + (battle.camera.y ?? 0) * (scale - 1);
+
+    // Trouve le point de spawn (en px physiques) le plus proche
+    const camZ1 = { ...battle.camera, zoom: 1 };
+    const spawnPt = battle.spawnCells
+      .map(cell => battle._grid
+        ? battle._grid.gridToScreen(cell.col, cell.row, camZ1, battle.viewport)
+        : this._grid.gridToScreen(cell.col, cell.row, camZ1, battle.viewport)
+      )
+      .sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy))[0];
+
     if (!spawnPt) return false;
 
     const unit = UNITS[type];
@@ -160,6 +170,7 @@ export class BattleManager {
       id:             `${type}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       type,
       movementType:   unit.movementType ?? 'ground',
+      // BUG-FIX #3 suite : position en px physiques (zoom=1)
       x:              spawnPt.x,
       y:              spawnPt.y,
       hp:             unit.hp ?? unit.stats?.hp ?? 120,
@@ -176,7 +187,7 @@ export class BattleManager {
     battle.elapsed  += dt;
     battle.timeLeft  = Math.max(0, BATTLE_CONFIG.durationSeconds - battle.elapsed);
 
-    // Mouvement + attaque des unités
+    // Mouvement + attaque des unités (coords px physiques zoom=1)
     for (const unit of battle.deployed) {
       if (unit.dead) continue;
       const target = this._closestBuilding(unit);
@@ -273,6 +284,7 @@ export class BattleManager {
 
   finish() {
     const battle = this.state;
+    // BUG-FIX #8 : guard contre double appel (finish() appelé automatiquement + via UI)
     if (!battle?.active) return battle?.result ?? null;
     battle.active = false;
     const scoring     = battle.buildings.filter(b => !b.trap);

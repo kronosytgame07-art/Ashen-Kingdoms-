@@ -4,11 +4,13 @@
  * Rendu ISOMÉTRIQUE natif via BuildingArtist.DRAW_FN,
  * exactement comme VillageRenderer.
  *
- * Le canvas de combat utilise une grille iso identique au village
- * (tileWidth=88, tileHeight=44) mais centrée différemment.
- *
- * Le spawn autour du village est visualisé par des marqueurs
- * sur le bord de la grille.
+ * BUG-FIX #2 : spawnZone reprojetée via cam/vp courants (plus de décalage
+ *              si le canvas change de taille entre start() et le rendu).
+ * BUG-FIX #3 : unités stockées en px physiques (zoom=1) → transformées
+ *              ctx.scale(renderZoom) avant de les dessiner.
+ * BUG-FIX #4 : effets idem — appliqués dans le même espace transformé.
+ * BUG-FIX #5 : z-order iso corrigé : tri par centre de bâtiment
+ *              (col + size.w/2 + row + size.h/2).
  */
 import { DRAW_FN } from './BuildingArtist.js';
 import { BATTLE_CONFIG } from '../data/battle.js';
@@ -31,7 +33,6 @@ const B = {
   tileEdge:'rgba(80,50,110,.28)',
 };
 
-// ─ diamond (même algo que VillageRenderer) ─────────────────────────────────
 function diamond(sw, sh, tileW, tileH) {
   const ex = tileW / 2;
   const ey = tileH / 2;
@@ -60,7 +61,6 @@ export class BattleRenderer {
 
   viewport() { return { width: this.canvas.clientWidth, height: this.canvas.clientHeight }; }
 
-  // ─ helpers ─────────────────────────────────────────────────────────────
   rrect(c, x, y, w, h, r) {
     r = Math.min(r, w / 2, h / 2);
     c.beginPath();
@@ -78,37 +78,37 @@ export class BattleRenderer {
     if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw; c.stroke(); }
   }
 
-  // ─ caméra de combat ─────────────────────────────────────────────────────
-  // Zoom légèrement réduit pour voir tout le village
-  camera(viewport) {
-    return { x: 0, y: 0, zoom: Math.min(viewport.width, viewport.height) / 900 };
+  // Zoom de rendu : même formule que BattleManager pour cohérence
+  renderZoom(vp) {
+    return Math.min(vp.width, vp.height) / 900;
   }
 
-  // ─ tuile iso ────────────────────────────────────────────────────────────
-  tile(col, row, cam, vp, fill, stroke) {
+  // Caméra de rendu — zoom appliqué par ctx.scale, pas dans gridToScreen
+  camera() {
+    return { x: 0, y: 0, zoom: 1 };
+  }
+
+  tile(col, row, cam, vp, rz, fill, stroke) {
     const pt = this._grid.gridToScreen(col, row, cam, vp);
-    const hw = this._grid.tileWidth  * cam.zoom / 2;
-    const hh = this._grid.tileHeight * cam.zoom / 2;
+    const hw = this._grid.tileWidth  * rz / 2;
+    const hh = this._grid.tileHeight * rz / 2;
     this.polygon([
-      { x: pt.x,      y: pt.y },
-      { x: pt.x + hw, y: pt.y + hh },
-      { x: pt.x,      y: pt.y + hh * 2 },
-      { x: pt.x - hw, y: pt.y + hh },
-    ], fill, stroke ?? B.tileEdge, Math.max(.5, cam.zoom * .8));
+      { x: pt.x * rz,          y: pt.y * rz },
+      { x: pt.x * rz + hw,     y: pt.y * rz + hh },
+      { x: pt.x * rz,          y: pt.y * rz + hh * 2 },
+      { x: pt.x * rz - hw,     y: pt.y * rz + hh },
+    ], fill, stroke ?? B.tileEdge, Math.max(.5, rz * .8));
   }
 
-  // ─ sol ──────────────────────────────────────────────────────────────────
-  ground(time, cam, vp) {
+  ground(time, cam, vp, rz) {
     const c = this.ctx;
 
-    // Fond dégradé
     const grad = c.createLinearGradient(0, 0, 0, vp.height);
     grad.addColorStop(0, '#1a0f28');
     grad.addColorStop(.5, '#130a1e');
     grad.addColorStop(1, B.bg0);
     c.fillStyle = grad; c.fillRect(0, 0, vp.width, vp.height);
 
-    // Veines de lave
     c.save(); c.globalAlpha = .10; c.strokeStyle = B.lava; c.lineWidth = .9;
     for (let i = 0; i < 10; i++) {
       const ox = (i * 137 + time * .003) % (vp.width + 200) - 100;
@@ -118,15 +118,13 @@ export class BattleRenderer {
     }
     c.restore();
 
-    // Tuiles iso
     const cols = BATTLE_CONFIG.gridCols;
     const rows = BATTLE_CONFIG.gridRows;
     for (let col = 0; col < cols; col++)
       for (let row = 0; row < rows; row++)
-        this.tile(col, row, cam, vp,
+        this.tile(col, row, cam, vp, rz,
           (col + row) % 2 ? B.tile0 : B.tile1, B.tileEdge);
 
-    // Braises
     c.save(); c.globalAlpha = .22;
     for (let i = 0; i < 50; i++) {
       const tt = time * .001 * (i % 4 + .4);
@@ -137,7 +135,6 @@ export class BattleRenderer {
     }
     c.restore();
 
-    // Vignette
     const vig = c.createRadialGradient(vp.width/2, vp.height/2, vp.height*.1,
                                         vp.width/2, vp.height/2, vp.width*.72);
     vig.addColorStop(0, 'rgba(0,0,0,0)');
@@ -145,33 +142,32 @@ export class BattleRenderer {
     c.fillStyle = vig; c.fillRect(0, 0, vp.width, vp.height);
   }
 
-  // ─ zone de spawn (bord de grille, teinté rouge) ─────────────────────────
-  drawSpawnZone(battle, cam, vp) {
-    if (!battle.spawnZone?.length) return;
+  // BUG-FIX #2 : reprojette les cellules de spawn avec le zoom courant
+  drawSpawnZone(battle, cam, vp, rz) {
+    if (!battle.spawnCells?.length) return;
     const c = this.ctx;
-    c.save(); c.globalAlpha = .18;
-    for (const pt of battle.spawnZone) {
+    c.save(); c.globalAlpha = .22;
+    for (const cell of battle.spawnCells) {
+      const pt = this._grid.gridToScreen(cell.col, cell.row, cam, vp);
       c.fillStyle = B.blood;
-      c.beginPath(); c.arc(pt.x, pt.y, 5, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(pt.x * rz, pt.y * rz, 5, 0, Math.PI * 2); c.fill();
     }
     c.restore();
   }
 
-  // ─ bâtiment ennemi (prisme iso via BuildingArtist) ─────────────────────
-  drawBuilding(b, cam, vp, time) {
-    const c   = this.ctx;
-    const tileW = this._grid.tileWidth  * cam.zoom;
-    const tileH = this._grid.tileHeight * cam.zoom;
-    const sw  = b.size?.w ?? 1;
-    const sh  = b.size?.h ?? 1;
-    const hp  = Math.max(0, b.hp / b.maxHp);
+  drawBuilding(b, cam, vp, rz, time) {
+    const c     = this.ctx;
+    const tileW = this._grid.tileWidth  * rz;
+    const tileH = this._grid.tileHeight * rz;
+    const sw    = b.size?.w ?? 1;
+    const sh    = b.size?.h ?? 1;
+    const hp    = Math.max(0, b.hp / b.maxHp);
 
-    // Point SUD en px = gridToScreen(col+sw, row+sh)
+    // BUG-FIX #3/#5 : on projette via gridToScreen (cohérent avec le sol)
     const ptSouth = this._grid.gridToScreen(b.col + sw, b.row + sh, cam, vp);
-    const x = ptSouth.x;
-    const y = ptSouth.y;
+    const x = ptSouth.x * rz;
+    const y = ptSouth.y * rz;
 
-    // Empreinte
     if (!b.trap || !b.hidden) {
       for (let dx = 0; dx < sw; dx++) {
         for (let dy = 0; dy < sh; dy++) {
@@ -180,21 +176,19 @@ export class BattleRenderer {
             : b.trap
               ? 'rgba(216,72,88,.15)'
               : 'rgba(60,40,90,.20)';
-          this.tile(b.col + dx, b.row + dy, cam, vp, fillCol, B.tileEdge);
+          this.tile(b.col + dx, b.row + dy, cam, vp, rz, fillCol, B.tileEdge);
         }
       }
     }
 
     if (b.trap && b.hidden) {
-      // Piège caché : juste un léger halo sang
       c.save(); c.globalAlpha = .08;
       c.fillStyle = B.blood;
-      c.beginPath(); c.arc(x, y, b.radius * .5, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(x, y, (b.radius ?? 12) * rz * .5, 0, Math.PI * 2); c.fill();
       c.restore();
       return;
     }
 
-    // Dessin iso
     const d     = diamond(sw, sh, tileW, tileH);
     const wallH = tileH * (sw + sh) * 0.55;
     const iso   = { d, wallH, tileW, tileH, sw, sh };
@@ -210,7 +204,6 @@ export class BattleRenderer {
     if (drawFn) {
       drawFn(c, iso, level, tSec, flick, false);
     } else {
-      // fallback générique
       const { south, east, north, west } = d;
       c.beginPath();
       c.moveTo(west.x, west.y); c.lineTo(south.x, south.y);
@@ -230,7 +223,6 @@ export class BattleRenderer {
       c.fill(); c.stroke();
     }
 
-    // Dommages : craquelures rouges
     if (hp < 0.5 && !b.trap) {
       c.globalAlpha *= (1 - hp) * .7;
       c.strokeStyle = B.blood; c.lineWidth = 1;
@@ -246,7 +238,6 @@ export class BattleRenderer {
 
     c.restore();
 
-    // Barre de vie
     if (!b.trap) {
       const bw = tileW * (sw + sh) * .55;
       const bx = x - bw / 2;
@@ -260,42 +251,42 @@ export class BattleRenderer {
     }
   }
 
-  // ─ unité alliée ──────────────────────────────────────────────────────────
-  drawUnit(u, time) {
+  // BUG-FIX #3 : les unités sont stockées en px physiques (zoom=1)
+  // → on les projette ici en multipliant par rz
+  drawUnit(u, rz, time) {
     const c  = this.ctx;
     const hp = Math.max(0, u.hp / u.maxHp);
-    const r  = u.type === 'ghoul' ? 13 : u.type === 'necromancer' ? 11 : 10;
+    const r  = (u.type === 'ghoul' ? 13 : u.type === 'necromancer' ? 11 : 10) * rz;
     const fill  = u.type === 'ghoul' ? '#8a7a58' : u.type === 'necromancer' ? '#a060e0' : '#ddd4ee';
     const glow  = u.type === 'ghoul' ? '#c8b070' : u.type === 'necromancer' ? '#d090ff' : '#f0e8ff';
     const eyeC  = u.type === 'necromancer' ? '#e8a0ff' : '#fff0aa';
 
+    // Position projetée
+    const px = u.x * rz;
+    const py = u.y * rz;
+
     c.save();
-    c.translate(u.x, u.y);
+    c.translate(px, py);
     c.globalAlpha = u.dead ? .22 : 1;
 
-    // Ombre
     c.beginPath(); c.ellipse(0, r * .5, r * 1.1, r * .38, 0, 0, Math.PI * 2);
     c.fillStyle = 'rgba(0,0,0,.44)'; c.fill();
 
-    // Contour épais
-    c.beginPath(); c.arc(0, 0, r + 2, 0, Math.PI * 2);
+    c.beginPath(); c.arc(0, 0, r + 2 * rz, 0, Math.PI * 2);
     c.fillStyle = B.outline; c.fill();
 
-    // Corps
     c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2);
     c.fillStyle = fill; c.fill();
 
-    // Halo
     if (!u.dead) {
       const bob = Math.sin(time / 220 + u.x * .03) * .5 + .5;
       c.save();
-      c.shadowColor = glow; c.shadowBlur = 6 + bob * 6;
-      c.strokeStyle = glow; c.lineWidth = 1.5;
+      c.shadowColor = glow; c.shadowBlur = (6 + bob * 6) * rz;
+      c.strokeStyle = glow; c.lineWidth = 1.5 * rz;
       c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.stroke();
       c.shadowBlur = 0; c.restore();
     }
 
-    // Yeux
     c.fillStyle = eyeC;
     c.beginPath(); c.ellipse(-r * .32, -r * .18, r * .22, r * .18, 0, 0, Math.PI * 2); c.fill();
     c.beginPath(); c.ellipse( r * .32, -r * .18, r * .22, r * .18, 0, 0, Math.PI * 2); c.fill();
@@ -303,59 +294,59 @@ export class BattleRenderer {
     c.beginPath(); c.ellipse(-r * .32, -r * .18, r * .1, r * .1, 0, 0, Math.PI * 2); c.fill();
     c.beginPath(); c.ellipse( r * .32, -r * .18, r * .1, r * .1, 0, 0, Math.PI * 2); c.fill();
 
-    // Arme
     c.strokeStyle = u.type === 'necromancer' ? '#c090ff' : '#9a8870';
-    c.lineWidth = 2;
+    c.lineWidth = 2 * rz;
     c.beginPath(); c.moveTo(r * .5, -r * .1); c.lineTo(r * 1.6, -r * 1.3); c.stroke();
     if (u.type === 'necromancer') {
       c.fillStyle = '#d0a0ff';
-      c.beginPath(); c.arc(r * 1.6, -r * 1.3, 3, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(r * 1.6, -r * 1.3, 3 * rz, 0, Math.PI * 2); c.fill();
     }
 
-    // Barre de vie
     if (!u.dead) {
-      const bw = r * 2.4, bx = -r * 1.2, by = -r - 10;
-      c.fillStyle = 'rgba(0,0,0,.72)'; c.fillRect(bx, by, bw, 4);
+      const bw = r * 2.4, bx = -r * 1.2, by = -r - 10 * rz;
+      c.fillStyle = 'rgba(0,0,0,.72)'; c.fillRect(bx, by, bw, 4 * rz);
       c.fillStyle = hp > .5 ? B.green : hp > .25 ? B.amber : B.blood;
-      c.fillRect(bx, by, bw * hp, 4);
-      c.strokeStyle = B.outline; c.lineWidth = .8; c.strokeRect(bx, by, bw, 4);
+      c.fillRect(bx, by, bw * hp, 4 * rz);
+      c.strokeStyle = B.outline; c.lineWidth = .8 * rz; c.strokeRect(bx, by, bw, 4 * rz);
     }
     c.restore();
   }
 
-  // ─ effets ────────────────────────────────────────────────────────────────
-  drawEffects(effects) {
+  // BUG-FIX #4 : effets en px physiques → projetés par rz
+  drawEffects(effects, rz) {
     const c = this.ctx;
     for (const fx of effects) {
       const maxLife = fx.kind === 'trap' ? .5 : fx.kind === 'splash' ? .45 : .35;
-      const t = Math.max(0, 1 - fx.life / maxLife);
+      const t  = Math.max(0, 1 - fx.life / maxLife);
+      const ex = fx.x * rz;
+      const ey = fx.y * rz;
       c.save();
       if (fx.kind === 'hit') {
-        c.globalAlpha = (1 - t) * .9; c.strokeStyle = B.amber; c.lineWidth = 2.5;
-        c.shadowColor = B.amber; c.shadowBlur = 10;
-        c.beginPath(); c.arc(fx.x, fx.y, 6 + t * 22, 0, Math.PI * 2); c.stroke();
+        c.globalAlpha = (1 - t) * .9; c.strokeStyle = B.amber; c.lineWidth = 2.5 * rz;
+        c.shadowColor = B.amber; c.shadowBlur = 10 * rz;
+        c.beginPath(); c.arc(ex, ey, (6 + t * 22) * rz, 0, Math.PI * 2); c.stroke();
         c.shadowBlur = 0;
       } else if (fx.kind === 'shot') {
-        c.globalAlpha = (1 - t) * .85; c.strokeStyle = B.glow; c.lineWidth = 2;
-        c.shadowColor = B.glow; c.shadowBlur = 14;
-        c.beginPath(); c.arc(fx.x, fx.y, 5 + t * 20, 0, Math.PI * 2); c.stroke();
+        c.globalAlpha = (1 - t) * .85; c.strokeStyle = B.glow; c.lineWidth = 2 * rz;
+        c.shadowColor = B.glow; c.shadowBlur = 14 * rz;
+        c.beginPath(); c.arc(ex, ey, (5 + t * 20) * rz, 0, Math.PI * 2); c.stroke();
         c.shadowBlur = 0;
       } else if (fx.kind === 'splash') {
-        c.globalAlpha = (1 - t) * .75; c.strokeStyle = B.blood; c.lineWidth = 3;
-        c.shadowColor = B.blood; c.shadowBlur = 16;
-        c.beginPath(); c.arc(fx.x, fx.y, 8 + t * 52, 0, Math.PI * 2); c.stroke();
+        c.globalAlpha = (1 - t) * .75; c.strokeStyle = B.blood; c.lineWidth = 3 * rz;
+        c.shadowColor = B.blood; c.shadowBlur = 16 * rz;
+        c.beginPath(); c.arc(ex, ey, (8 + t * 52) * rz, 0, Math.PI * 2); c.stroke();
         c.shadowBlur = 0;
       } else if (fx.kind === 'trap') {
-        c.globalAlpha = (1 - t) * .8; c.strokeStyle = B.green; c.lineWidth = 2.5;
-        c.shadowColor = B.green; c.shadowBlur = 18;
-        c.beginPath(); c.arc(fx.x, fx.y, 6 + t * 44, 0, Math.PI * 2); c.stroke();
+        c.globalAlpha = (1 - t) * .8; c.strokeStyle = B.green; c.lineWidth = 2.5 * rz;
+        c.shadowColor = B.green; c.shadowBlur = 18 * rz;
+        c.beginPath(); c.arc(ex, ey, (6 + t * 44) * rz, 0, Math.PI * 2); c.stroke();
         c.shadowBlur = 0;
-        c.globalAlpha = (1 - t) * .5; c.strokeStyle = B.green; c.lineWidth = 1.5;
+        c.globalAlpha = (1 - t) * .5; c.strokeStyle = B.green; c.lineWidth = 1.5 * rz;
         for (let i = 0; i < 8; i++) {
           const a = i / 8 * Math.PI * 2;
           c.beginPath();
-          c.moveTo(fx.x + Math.cos(a) * 6, fx.y + Math.sin(a) * 6);
-          c.lineTo(fx.x + Math.cos(a) * (10 + t * 42), fx.y + Math.sin(a) * (10 + t * 42));
+          c.moveTo(ex + Math.cos(a) * 6 * rz, ey + Math.sin(a) * 6 * rz);
+          c.lineTo(ex + Math.cos(a) * (10 + t * 42) * rz, ey + Math.sin(a) * (10 + t * 42) * rz);
           c.stroke();
         }
       }
@@ -363,7 +354,6 @@ export class BattleRenderer {
     }
   }
 
-  // ─ HUD ──────────────────────────────────────────────────────────────────
   drawHUD(battle, time) {
     const c  = this.ctx;
     const vp = this.viewport();
@@ -380,7 +370,6 @@ export class BattleRenderer {
     c.save();
     const px = vp.width / 2, py = 16;
 
-    // Timer
     c.shadowColor = urgency ? B.blood : B.glow; c.shadowBlur = urgency ? 18 : 10;
     c.fillStyle   = 'rgba(7,4,14,.92)';
     this.rrect(c, px - 54, py, 108, 32, 16); c.fill();
@@ -392,7 +381,6 @@ export class BattleRenderer {
     c.font = `700 18px 'Cinzel',serif`;
     c.fillText(`⏱ ${label}`, px, py + 16);
 
-    // Destruction %
     c.fillStyle = 'rgba(7,4,14,.86)';
     this.rrect(c, px - 44, py + 40, 88, 24, 12); c.fill();
     c.strokeStyle = B.amber; c.lineWidth = 1.4;
@@ -400,7 +388,6 @@ export class BattleRenderer {
     c.fillStyle = B.amber; c.font = `700 13px 'Cinzel',serif`;
     c.fillText(`💥 ${destPct}%`, px, py + 52);
 
-    // Étoiles
     const stars = destPct === 100 ? 3
       : battle.buildings.find(b => b.id === 'enemy-th')?.hp <= 0 ? 2
       : destPct >= 50 ? 1 : 0;
@@ -410,31 +397,36 @@ export class BattleRenderer {
       c.fillText('⭐', px - 30 + i * 30, py + 82);
     }
     c.globalAlpha = 1;
-
     c.restore();
   }
 
-  // ─ render principal ──────────────────────────────────────────────────────
   render(battle, time) {
     const vp  = this.viewport();
-    const cam = this.camera(vp);
+    const cam = this.camera();
+    // BUG-FIX #3/#4 : renderZoom séparé — la physique reste en zoom=1
+    const rz  = this.renderZoom(vp);
 
-    this.ground(time, cam, vp);
-    this.drawSpawnZone(battle, cam, vp);
+    this.ground(time, cam, vp, rz);
+    // BUG-FIX #2
+    this.drawSpawnZone(battle, cam, vp, rz);
 
-    // Bâtiments triés par (col+row) pour le z-order iso
+    // BUG-FIX #5 : z-order par centre du bâtiment
     [...battle.buildings]
-      .sort((a, b) => (a.col + a.row) - (b.col + b.row))
+      .sort((a, b) =>
+        (a.col + (a.size?.w ?? 1) / 2 + a.row + (a.size?.h ?? 1) / 2) -
+        (b.col + (b.size?.w ?? 1) / 2 + b.row + (b.size?.h ?? 1) / 2)
+      )
       .forEach(b => {
-        if (b.hp > 0 || b.trap) this.drawBuilding(b, cam, vp, time);
+        if (b.hp > 0 || b.trap) this.drawBuilding(b, cam, vp, rz, time);
       });
 
-    // Unités
+    // BUG-FIX #3 : passage de rz
     battle.deployed
       .sort((a, b) => a.y - b.y)
-      .forEach(u => this.drawUnit(u, time));
+      .forEach(u => this.drawUnit(u, rz, time));
 
-    this.drawEffects(battle.effects);
+    // BUG-FIX #4 : passage de rz
+    this.drawEffects(battle.effects, rz);
     this.drawHUD(battle, time);
   }
 }
