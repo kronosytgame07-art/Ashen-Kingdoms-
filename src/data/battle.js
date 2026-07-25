@@ -24,7 +24,6 @@ export const BATTLE_CONFIG = {
 };
 
 // ─ Templates de village par niveau HDV ─────────────────────────────────────
-// Chaque entrée = liste de bâtiments avec position cas-iso
 const BASE_TEMPLATES = {
   1: [
     { id:'th',   type:'townHall',     col:8,  row:8,  size:{w:2,h:2}, hp:600,  maxHp:600,  lootWeight:3 },
@@ -54,14 +53,14 @@ const BASE_TEMPLATES = {
       defense:{ range:7, damage:22, cooldown:1.3, attackType:'single', targetPriority:'nearest', targets:['ground','air'] } },
     { id:'bc1',  type:'boneCatapult', col:9,  row:4,  size:{w:2,h:2}, hp:360,  maxHp:360,  lootWeight:1,
       defense:{ range:9, damage:28, cooldown:2.2, attackType:'splash', splashRadius:2.5, targetPriority:'cluster', targets:['ground'] } },
-    { id:'w1',   type:'wall', col:6, row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
-    { id:'w2',   type:'wall', col:7, row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
-    { id:'w3',   type:'wall', col:8, row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
-    { id:'w4',   type:'wall', col:9, row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
-    { id:'w5',   type:'wall', col:10, row:7, size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
-    { id:'w6',   type:'wall', col:11, row:7, size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
-    { id:'w7',   type:'wall', col:6, row:11, size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
-    { id:'w8',   type:'wall', col:11, row:11,size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
+    { id:'w1',   type:'wall', col:6,  row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
+    { id:'w2',   type:'wall', col:7,  row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
+    { id:'w3',   type:'wall', col:8,  row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
+    { id:'w4',   type:'wall', col:9,  row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
+    { id:'w5',   type:'wall', col:10, row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
+    { id:'w6',   type:'wall', col:11, row:7,  size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
+    { id:'w7',   type:'wall', col:6,  row:11, size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
+    { id:'w8',   type:'wall', col:11, row:11, size:{w:1,h:1}, hp:300, maxHp:300, lootWeight:0, isWall:true },
     { id:'tr1',  type:'cursedTrap', col:9, row:10, size:{w:1,h:1}, hp:1, maxHp:1, lootWeight:0,
       hidden:true, triggered:false, trap:{ damage:80, triggerRadius:1.5, splashRadius:2, targets:['ground'] } },
     { id:'tr2',  type:'cursedTrap', col:5, row:9,  size:{w:1,h:1}, hp:1, maxHp:1, lootWeight:0,
@@ -108,10 +107,9 @@ const BASE_TEMPLATES = {
  * enemyLevel = playerLevel + random(-1, +1), clampé 1–3.
  */
 export function generateEnemyBase(playerTownHallLevel = 1) {
-  const delta     = Math.floor(Math.random() * 3) - 1; // -1, 0, +1
-  const lvl       = Math.max(1, Math.min(3, playerTownHallLevel + delta));
-  const template  = BASE_TEMPLATES[lvl] ?? BASE_TEMPLATES[1];
-  // Deep-clone + tag du niveau
+  const delta    = Math.floor(Math.random() * 3) - 1; // -1, 0, +1
+  const lvl      = Math.max(1, Math.min(3, playerTownHallLevel + delta));
+  const template = BASE_TEMPLATES[lvl] ?? BASE_TEMPLATES[1];
   return template.map(b => ({ ...b,
     id: `enemy-${b.id}`,
     enemyLevel: lvl,
@@ -119,7 +117,4 @@ export function generateEnemyBase(playerTownHallLevel = 1) {
   }));
 }
 
-// Export legacy pour compatibilité (non utilisé si generateEnemyBase est appelé)
 export const ENEMY_BUILDINGS = BASE_TEMPLATES[1].map(b => ({ ...b, id:`enemy-${b.id}`, cooldownLeft:0 }));
-
-export { BATTLE_CONFIG };
