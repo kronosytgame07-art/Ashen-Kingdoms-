@@ -3,7 +3,7 @@
  * Chemins relatifs compatibles avec GitHub Pages et cache invalidé à chaque correctif critique.
  */
 
-const CACHE_NAME = 'ashen-kingdoms-v7';
+const CACHE_NAME = 'ashen-kingdoms-v8';
 
 const STATIC_ASSETS = [
   './',
@@ -32,7 +32,7 @@ const STATIC_ASSETS = [
   './src/data/units.js',
   './src/data/progression.js',
   './src/data/battle.js',
-  './assets/hdv-dark-fortress.jpeg'
+  './assets/hdv1-fortress.webp'
 ];
 
 self.addEventListener('install', (event) => {
