@@ -3,7 +3,7 @@
  * Chemins relatifs compatibles avec GitHub Pages et cache invalidé à chaque correctif critique.
  */
 
-const CACHE_NAME = 'ashen-kingdoms-v6';
+const CACHE_NAME = 'ashen-kingdoms-v7';
 
 const STATIC_ASSETS = [
   './',
