@@ -1,12 +1,11 @@
 /**
- * sw.js — Service Worker for Ashen Kingdoms PWA
- * Les URLs sont résolues relativement au dossier du dépôt GitHub Pages.
+ * sw.js — Service Worker for Ashen Kingdoms PWA.
+ * Chemins relatifs compatibles avec GitHub Pages et cache invalidé à chaque correctif critique.
  */
 
-const CACHE_NAME = 'ashen-kingdoms-v2';
-const BASE_URL = new URL('./', self.location.href);
+const CACHE_NAME = 'ashen-kingdoms-v3';
 
-const STATIC_PATHS = [
+const STATIC_ASSETS = [
   './',
   './index.html',
   './styles.css',
@@ -34,15 +33,9 @@ const STATIC_PATHS = [
   './assets/hdv-dark-fortress.jpeg'
 ];
 
-const STATIC_ASSETS = STATIC_PATHS.map((path) => new URL(path, BASE_URL).href);
-const FALLBACK_URL = new URL('./index.html', BASE_URL).href;
-
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(async (cache) => {
-      // Une ressource manquante ne doit plus faire échouer toute l'installation.
-      await Promise.allSettled(STATIC_ASSETS.map((url) => cache.add(url)));
-    })
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
@@ -60,22 +53,15 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
-    caches.match(event.request).then(async (cached) => {
-      try {
-        const response = await fetch(event.request);
-        if (response && response.status === 200 && response.type !== 'opaque') {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
+    caches.match(event.request).then((cached) => {
+      if (cached) return cached;
+
+      return fetch(event.request).then((response) => {
+        if (!response || response.status !== 200 || response.type === 'opaque') return response;
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         return response;
-      } catch (error) {
-        if (cached) return cached;
-        if (event.request.mode === 'navigate') {
-          const fallback = await caches.match(FALLBACK_URL);
-          if (fallback) return fallback;
-        }
-        throw error;
-      }
-    })
+      });
+    }).catch(() => caches.match('./index.html'))
   );
 });
