@@ -2,6 +2,59 @@ import { Game }           from './core/Game.js';
 import { ProfileManager } from './core/ProfileManager.js';
 
 /*
+ * Correctif tactile iOS/Safari :
+ * - place explicitement le canvas derrière l'interface ;
+ * - rend les boutons tactiles prioritaires ;
+ * - empêche Safari de transformer les gestes du jeu en scroll/zoom de page ;
+ * - sécurise setPointerCapture(), qui peut lever une exception sur Safari.
+ */
+function installTouchCompatibility() {
+  const style = document.createElement('style');
+  style.id = 'ashen-touch-fix';
+  style.textContent = `
+    html, body, #app, .game-shell { overscroll-behavior: none; }
+    button, [role="button"], input { touch-action: manipulation; }
+    .game-shell { isolation: isolate; }
+    #gameCanvas {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: auto;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .vignette { z-index: 1; pointer-events: none !important; }
+    .objective-card, .gesture-hint { z-index: 2; pointer-events: none; }
+    .selection-panel, .center-camera, .open-build-menu-button,
+    .battle-hud, .deployment-bar { z-index: 20; pointer-events: auto; }
+    .context-backdrop { z-index: 30; pointer-events: auto; }
+    .building-context, .build-menu { z-index: 31; pointer-events: auto; }
+    .battle-result { z-index: 40; pointer-events: auto; }
+    .topbar { position: relative; z-index: 50; pointer-events: auto; }
+    .topbar button, .game-shell button { pointer-events: auto; }
+  `;
+  document.head.append(style);
+
+  const gameCanvas = document.getElementById('gameCanvas');
+  if (!gameCanvas) return;
+
+  const nativeCapture = gameCanvas.setPointerCapture?.bind(gameCanvas);
+  gameCanvas.setPointerCapture = (pointerId) => {
+    try { nativeCapture?.(pointerId); } catch (error) {
+      console.warn('[Touch] Pointer capture ignorée par Safari', error);
+    }
+  };
+
+  gameCanvas.addEventListener('touchstart', (event) => event.preventDefault(), { passive: false });
+  gameCanvas.addEventListener('touchmove',  (event) => event.preventDefault(), { passive: false });
+}
+
+installTouchCompatibility();
+
+/*
  * Compatibilité temporaire entre VillageRenderer et BuildingArtist.
  * VillageRenderer expose north/south/east/west tandis que BuildingArtist
  * utilise top/bottom/left/right. Sans ces alias, le premier rendu du Trône
